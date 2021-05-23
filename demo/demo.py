@@ -3,6 +3,7 @@ import argparse
 import glob
 import multiprocessing as mp
 import os
+import os.path as osp
 import time
 import cv2
 import tqdm
@@ -12,6 +13,10 @@ from detectron2.utils.logger import setup_logger
 
 from predictor import VisualizationDemo
 from adet.config import get_cfg
+
+from mask_tracker import MaskTracker
+from mask_tracker import parse_mots_results
+
 
 # constants
 WINDOW_NAME = "COCO detections"
@@ -42,6 +47,8 @@ def get_parser():
     )
     parser.add_argument("--webcam", action="store_true", help="Take inputs from webcam.")
     parser.add_argument("--video-input", help="Path to video file.")
+    parser.add_argument("--track", action="store_true", help="Tracking by mask IoU.")
+    parser.add_argument("--mots-seqs", nargs="+", help="A list of space separated mots videos ids")
     parser.add_argument("--input", nargs="+", help="A list of space separated input images")
     parser.add_argument(
         "--output",
@@ -64,6 +71,98 @@ def get_parser():
     return parser
 
 
+def infer_with_tracking(args, demo, tracker):
+    out_imgs_dir = osp.join(args.output, "images")
+    if not osp.exists(args.output) or not osp.exists(out_imgs_dir):
+        os.system(f"mkdir -p {out_imgs_dir}")
+
+    if args.mots_txt and osp.exists(args.mots_txt):
+        os.system(f"rm -rf {args.mots_txt}")
+
+    infer_time = 0
+    for frame_id, path in enumerate(tqdm.tqdm(args.imgs, disable=args.mots_txt), 1):
+        # use PIL, to be consistent with evaluation
+        img = read_image(path, format="BGR")
+        start_time = time.time()
+        predictions, visualized_output, track_ids = demo.run_on_image_with_tracker(
+            img, tracker, frame_id
+        )
+        runtime = time.time() - start_time
+        infer_time += runtime
+        print(
+            f"{path}: detected {len(predictions['instances'])} instances in {runtime:.2f}s"
+        )
+        if args.mots_txt:
+            mots_results = parse_mots_results(img, frame_id, tracker.instances, track_ids)
+            with open(args.mots_txt, 'a+') as f:
+                f.writelines(mots_results)
+        out_filename = osp.join(out_imgs_dir, osp.basename(path))
+        visualized_output.save(out_filename)
+
+    video_cmd = f"ffmpeg -threads 2 -y -f image2 -r {args.fps} -i {out_imgs_dir}/%06d.jpg"
+    video_file = osp.join(args.output, f"{args.output.split('/')[-1]}.mp4")
+    video_cmd += f" -b:v 5000k -c:v mpeg4 {video_file}"
+    os.system(video_cmd)
+
+    return infer_time
+
+
+def infer_on_mots(args, demo):
+    mots_path = osp.join(osp.dirname(__file__), "../datasets/mots/MOTS")
+    mots_seqs = [
+        osp.join(mots_path, "train", seq) for seq in os.listdir(osp.join(mots_path, "train"))
+        if seq.startswith("MOTS")
+    ]
+    mots_seqs += [
+        osp.join(mots_path, "test", seq) for seq in os.listdir(osp.join(mots_path, "test"))
+        if seq.startswith("MOTS")
+    ]
+    if args.input[1] == "train":
+        mots_seqs = mots_seqs[:4]
+        out_dir = osp.join(args.output, "train")
+    elif args.input[1] == "test":
+        mots_seqs = mots_seqs[-4:]
+        out_dir = osp.join(args.output, "test")
+    else:
+        mots_seqs = [
+            seq for seq in mots_seqs if seq[-2:] in args.input[1:]
+        ]
+        out_dir = osp.join(args.output, "mix")
+    seqs_name = [seq.split('/')[-1] for seq in mots_seqs]
+    print(f"Infer on {seqs_name} ...")
+    if not osp.exists(out_dir):
+        os.system(f"mkdir -p {out_dir}")
+
+    mots_fps = {
+        "MOTS20-02": 30,
+        "MOTS20-05": 14,
+        "MOTS20-09": 30,
+        "MOTS20-11": 30,
+        "MOTS20-01": 30,
+        "MOTS20-06": 14,
+        "MOTS20-07": 30,
+        "MOTS20-12": 30,
+    }
+
+    tracker = MaskTracker()
+    total_time = 0
+    for seq_name, seq_path in zip(seqs_name, mots_seqs):
+        img_dir = osp.join(seq_path, "img1")
+        args.imgs = [osp.join(img_dir, f) for f in os.listdir(img_dir) if f.endswith(".jpg")]
+        args.imgs = sorted(args.imgs)
+        args.fps = mots_fps[seq_name]
+        args.output = osp.join(out_dir, seq_name)
+        args.mots_txt = osp.join(args.output, f"{seq_name}.txt")
+        print(f"Inferring on {seq_name} ...")
+        infer_time = infer_with_tracking(args, demo, tracker)
+        print(f"Results saved in {args.output}, runtime: {infer_time:.2f} s")
+        total_time += infer_time
+
+        tracker.reset()
+
+    print(f"Total time: {total_time:.2f} s")
+
+
 if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
     args = get_parser().parse_args()
@@ -74,7 +173,16 @@ if __name__ == "__main__":
 
     demo = VisualizationDemo(cfg)
 
-    if args.input:
+    if args.input[0] == "mots":
+       infer_on_mots(args, demo)
+    elif args.track:
+        args.imgs = [osp.join(args.input[0], fname) for fname in os.listdir(args.input[0]) if fname.endswith(".jpg")]
+        args.imgs = sorted(args.imgs)
+        args.fps = 30
+        tracker = MaskTracker()
+        infer_time = infer_with_tracking(args, demo, tracker)
+        print(f"Inference time: {infer_time:.2f} s")
+    elif args.input:
         if os.path.isdir(args.input[0]):
             args.input = [os.path.join(args.input[0], fname) for fname in os.listdir(args.input[0])]
         elif len(args.input) == 1:

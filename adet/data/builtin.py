@@ -30,6 +30,18 @@ metadata_text = {
     "thing_classes": ["text"]
 }
 
+_PREDEFINED_SPLITS_MOTS = {
+    "mots_train": ("mots/MOTS/train", "mots/MOTS/annotations/train.json"),
+    "mots_train-09": ("mots/MOTS/train", "mots/MOTS/annotations/train-09.json"),
+    "mots_val-09": ("mots/MOTS/train", "mots/MOTS/annotations/val-09.json"),
+    "mots_train-11": ("mots/MOTS/train", "mots/MOTS/annotations/train-11.json"),
+    "mots_val-11": ("mots/MOTS/train", "mots/MOTS/annotations/val-11.json"),
+}
+
+metadata_mots = {
+    "thing_classes": ["pedestrian"]
+}
+
 
 def register_all_coco(root="datasets"):
     for key, (image_root, json_file) in _PREDEFINED_SPLITS_PIC.items():
@@ -45,6 +57,14 @@ def register_all_coco(root="datasets"):
         register_text_instances(
             key,
             metadata_text,
+            os.path.join(root, json_file) if "://" not in json_file else json_file,
+            os.path.join(root, image_root),
+        )
+    for key, (image_root, json_file) in _PREDEFINED_SPLITS_MOTS.items():
+        # Assume pre-defined datasets live in `./datasets`.
+        register_coco_instances(
+            key,
+            metadata_mots,
             os.path.join(root, json_file) if "://" not in json_file else json_file,
             os.path.join(root, image_root),
         )

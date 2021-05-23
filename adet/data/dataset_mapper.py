@@ -83,6 +83,7 @@ class DatasetMapperWithBasis(DatasetMapper):
         if self.boxinst_enabled:
             self.use_instance_mask = False
             self.recompute_boxes = False
+        self.instance_mask_format = cfg.INPUT.MASK_FORMAT
 
     def __call__(self, dataset_dict):
         """

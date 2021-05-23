@@ -12,6 +12,7 @@ from detectron2.data import MetadataCatalog
 from detectron2.engine.defaults import DefaultPredictor
 from detectron2.utils.video_visualizer import VideoVisualizer
 from detectron2.utils.visualizer import ColorMode, Visualizer
+from detectron2.utils.colormap import random_color
 
 from adet.utils.visualizer import TextVisualizer
 
@@ -74,6 +75,19 @@ class VisualizationDemo(object):
                 vis_output = visualizer.draw_instance_predictions(predictions=instances)
 
         return predictions, vis_output
+
+    def run_on_image_with_tracker(self, image, tracker, frame_id):
+        predictions = self.predictor(image)
+        # Convert image from OpenCV BGR format to Matplotlib RGB format.
+        image = image[:, :, ::-1]
+        visualizer = TrackVisualizer(image, self.metadata, instance_mode=self.instance_mode)
+        instances = predictions["instances"].to(self.cpu_device)
+        instances = instances[instances.pred_classes == 0]
+        tracker.instances = instances
+        track_ids = tracker.track(frame_id)
+        visualizer.track_ids = track_ids.numpy()
+        vis_output = visualizer.draw_instance_predictions(predictions=instances)
+        return predictions, vis_output, track_ids
 
     def _frame_from_video(self, video):
         while video.isOpened():
@@ -245,3 +259,117 @@ class AsyncPredictor:
     @property
     def default_buffer_size(self):
         return len(self.procs) * 5
+
+
+
+_SMALL_OBJECT_AREA_THRESH = 1000
+
+class TrackVisualizer(Visualizer):
+    def overlay_instances(
+        self,
+        *,
+        boxes=None,
+        labels=None,
+        masks=None,
+        keypoints=None,
+        assigned_colors=None,
+        alpha=0.5
+    ):
+        num_instances = None
+        if boxes is not None:
+            boxes = self._convert_boxes(boxes)
+            num_instances = len(boxes)
+        if masks is not None:
+            masks = self._convert_masks(masks)
+            if num_instances:
+                assert len(masks) == num_instances
+            else:
+                num_instances = len(masks)
+        if keypoints is not None:
+            if num_instances:
+                assert len(keypoints) == num_instances
+            else:
+                num_instances = len(keypoints)
+            keypoints = self._convert_keypoints(keypoints)
+
+        if num_instances == 0:
+            return self.output
+        if labels is not None:
+            assert len(labels) == num_instances
+        track_ids = self.track_ids
+        assert len(track_ids) == num_instances
+
+        # Display in largest to smallest order to reduce occlusion.
+        areas = None
+        if boxes is not None:
+            areas = np.prod(boxes[:, 2:] - boxes[:, :2], axis=1)
+        elif masks is not None:
+            areas = np.asarray([x.area() for x in masks])
+
+        if areas is not None:
+            sorted_idxs = np.argsort(-areas).tolist()
+            # Re-order overlapped instances in descending order.
+            boxes = boxes[sorted_idxs] if boxes is not None else None
+            labels = [labels[k] for k in sorted_idxs] if labels is not None else None
+            masks = [masks[idx] for idx in sorted_idxs] if masks is not None else None
+            track_ids = [track_ids[idx] for idx in sorted_idxs]
+            keypoints = keypoints[sorted_idxs] if keypoints is not None else None
+
+        for i in range(num_instances):
+            track_id = track_ids[i]
+            np.random.seed(track_id)
+            color = random_color(rgb=True, maximum=1)
+            if boxes is not None:
+                self.draw_box(boxes[i], edge_color=color)
+
+            if masks is not None:
+                for segment in masks[i].polygons:
+                    self.draw_polygon(segment.reshape(-1, 2), color, alpha=alpha)
+
+            if labels is not None:
+                # first get a box
+                if boxes is not None:
+                    x0, y0, x1, y1 = boxes[i]
+                    text_pos = (x0, y0)  # if drawing boxes, put text on the box corner.
+                    horiz_align = "left"
+                elif masks is not None:
+                    # skip small mask without polygon
+                    if len(masks[i].polygons) == 0:
+                        continue
+
+                    x0, y0, x1, y1 = masks[i].bbox()
+
+                    # draw text in the center (defined by median) when box is not drawn
+                    # median is less sensitive to outliers.
+                    text_pos = np.median(masks[i].mask.nonzero(), axis=1)[::-1]
+                    horiz_align = "center"
+                else:
+                    continue  # drawing the box confidence for keypoints isn't very useful.
+                # for small objects, draw text at the side to avoid occlusion
+                instance_area = (y1 - y0) * (x1 - x0)
+                if (
+                    instance_area < _SMALL_OBJECT_AREA_THRESH * self.output.scale
+                    or y1 - y0 < 40 * self.output.scale
+                ):
+                    if y1 >= self.output.height - 5:
+                        text_pos = (x1, y0)
+                    else:
+                        text_pos = (x0, y1)
+
+                height_ratio = (y1 - y0) / np.sqrt(self.output.height * self.output.width)
+                lighter_color = self._change_color_brightness(color, brightness_factor=0.7)
+                font_size = (
+                    np.clip((height_ratio - 0.02) / 0.08 + 1, 1.2, 2)
+                    * 0.5
+                    * self._default_font_size
+                )
+                score = labels[i].split(' ')[1]
+                label = f"pedestrian-{track_id} {score}"
+                self.draw_text(
+                    label,
+                    text_pos,
+                    color=lighter_color,
+                    horizontal_alignment=horiz_align,
+                    font_size=font_size,
+                )
+        return self.output

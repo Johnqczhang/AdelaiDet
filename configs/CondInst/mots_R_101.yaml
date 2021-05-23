@@ -1,0 +1,23 @@
+_BASE_: "Base-CondInst.yaml"
+MODEL:
+  WEIGHTS: "models/CondInst_MS_R_101_3x.pth"
+  RESNETS:
+    DEPTH: 101
+OUTPUT_DIR: "train_dir/CondInst_mots_R_101_1x"
+INPUT:
+  MASK_FORMAT: "bitmask"
+DATASETS:
+  TRAIN: ("mots_train-09",)
+  TEST: ("mots_val-09",)
+  # TRAIN: ("mots_train",)
+  # TEST: ()
+SOLVER:
+  OPTIMIZER: "Adam"
+  IMS_PER_BATCH: 16
+  BASE_LR: 5e-7
+  # 1x, train, ~358 iters/epoch
+  STEPS: (2864, 3819)  # epochs: (8, ~11)
+  MAX_ITER: 4296  # 12 epochs
+  # 1x, train-09, ~293 iters/epoch
+  # STEPS: (2344, 3125)
+  # MAX_ITER: 3516

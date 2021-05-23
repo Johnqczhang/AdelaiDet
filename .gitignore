@@ -2,7 +2,7 @@
 output
 instant_test_output
 inference_test_output
-
+train_dir
 
 *.jpg
 *.png
@@ -42,6 +42,7 @@ dist/
 /datasets/lvis
 /datasets/pic
 /datasets/ytvos
+/datasets/mots
 /models
 /demo_outputs
 /example_inputs

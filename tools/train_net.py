@@ -41,6 +41,9 @@ from adet.data.dataset_mapper import DatasetMapperWithBasis
 from adet.config import get_cfg
 from adet.checkpoint import AdetCheckpointer
 from adet.evaluation import TextEvaluator
+from adet.evaluation import MOTSEvaluator
+from detectron2.solver import get_default_optimizer_params
+from detectron2.solver.build import maybe_add_gradient_clipping
 
 
 class Trainer(DefaultTrainer):
@@ -125,7 +128,10 @@ class Trainer(DefaultTrainer):
                 )
             )
         if evaluator_type in ["coco", "coco_panoptic_seg"]:
-            evaluator_list.append(COCOEvaluator(dataset_name, cfg, True, output_folder))
+            if "mots" in dataset_name:
+                evaluator_list.append(MOTSEvaluator(dataset_name, cfg, True, output_folder))
+            else:
+                evaluator_list.append(COCOEvaluator(dataset_name, cfg, True, output_folder))
         if evaluator_type == "coco_panoptic_seg":
             evaluator_list.append(COCOPanopticEvaluator(dataset_name, output_folder))
         if evaluator_type == "pascal_voc":
@@ -160,6 +166,34 @@ class Trainer(DefaultTrainer):
         res = cls.test(cfg, model, evaluators)
         res = OrderedDict({k + "_TTA": v for k, v in res.items()})
         return res
+
+    @classmethod
+    def build_optimizer(cls, cfg, model):
+        """
+        Build an optimizer from config.
+        """
+        params = get_default_optimizer_params(
+            model,
+            base_lr=cfg.SOLVER.BASE_LR,
+            weight_decay=cfg.SOLVER.WEIGHT_DECAY,
+            weight_decay_norm=cfg.SOLVER.WEIGHT_DECAY_NORM,
+            bias_lr_factor=cfg.SOLVER.BIAS_LR_FACTOR,
+            weight_decay_bias=cfg.SOLVER.WEIGHT_DECAY_BIAS,
+        )
+        optimizer_type = cfg.SOLVER.OPTIMIZER
+        if optimizer_type == "SGD":
+            return maybe_add_gradient_clipping(cfg, torch.optim.SGD)(
+                params,
+                lr=cfg.SOLVER.BASE_LR,
+                momentum=cfg.SOLVER.MOMENTUM,
+                nesterov=cfg.SOLVER.NESTEROV,
+            )
+        elif optimizer_type == "Adam":
+            return maybe_add_gradient_clipping(cfg, torch.optim.Adam)(
+                params, lr=cfg.SOLVER.BASE_LR
+            )
+        else:
+            raise NotImplementedError(f"no optimizer type {optimizer_type}")
 
 
 def setup(args):

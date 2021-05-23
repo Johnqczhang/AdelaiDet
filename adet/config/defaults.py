@@ -11,6 +11,11 @@ _C.MODEL.RESNETS.DEFORM_INTERVAL = 1
 _C.INPUT.HFLIP_TRAIN = True
 _C.INPUT.CROP.CROP_INSTANCE = True
 
+# Optimizer type.
+_C.SOLVER.OPTIMIZER = "SGD"
+# Mask format
+_C.INPUT.MASK_FORMAT = "polygon"
+
 # ---------------------------------------------------------------------------- #
 # FCOS Head
 # ---------------------------------------------------------------------------- #
