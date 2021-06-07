@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import logging
 from skimage import color
+from functools import reduce
 
 import torch
 from torch import nn
@@ -113,6 +114,11 @@ class CondInst(nn.Module):
         self.to(self.device)
 
     def forward(self, batched_inputs):
+        if self.training and self.proposal_generator.pixel_head_on:
+            # convert the format as the same as the previous
+            batched_inputs = reduce(
+                lambda x,y: x+y, list(map(lambda x: x["pair_data"], batched_inputs))
+            )
         original_images = [x["image"].to(self.device) for x in batched_inputs]
 
         # normalize images

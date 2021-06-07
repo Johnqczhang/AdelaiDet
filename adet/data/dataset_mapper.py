@@ -79,6 +79,7 @@ class DatasetMapperWithBasis(DatasetMapper):
         self.basis_loss_on = cfg.MODEL.BASIS_MODULE.LOSS_ON
         self.ann_set = cfg.MODEL.BASIS_MODULE.ANN_SET
         self.boxinst_enabled = cfg.MODEL.BOXINST.ENABLED
+        self.track_enabled = cfg.MODEL.PIXEL_HEAD.ENABLED
 
         if self.boxinst_enabled:
             self.use_instance_mask = False
@@ -183,6 +184,9 @@ class DatasetMapperWithBasis(DatasetMapper):
             instances = annotations_to_instances(
                 annos, image_shape, mask_format=self.instance_mask_format
             )
+            if self.track_enabled:
+                track_ids = [int(obj["track_id"]) for obj in annos]
+                instances.track_ids = torch.as_tensor(track_ids, dtype=torch.int64)
 
             # After transforms such as cropping are applied, the bounding box may no longer
             # tightly bound the object. As an example, imagine a triangle object

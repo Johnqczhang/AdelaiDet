@@ -2,7 +2,6 @@ import numpy as np
 import torch
 import pycocotools.mask as mask_util
 
-# from detectron2.structures import BoxMode
 from motmetrics.lap import linear_sum_assignment
 from mmtrack.models import TRACKERS
 from mmtrack.models.mot.trackers.base_tracker import BaseTracker
@@ -21,56 +20,82 @@ def mask2rles(masks):
 
 @TRACKERS.register_module()
 class MaskTracker(BaseTracker):
-    def __init__(self, match_iou_thr=0.7, num_tentatives=3, **kwargs):
+    def __init__(self, track_metric="miou", match_thr=0.7, **kwargs):
         super().__init__(**kwargs)
-        self.match_iou_thr = match_iou_thr
-        self.num_tentatives = num_tentatives
+        self.track_metric = track_metric
+        self.match_thr = match_thr
+
+    def compute_dists_by_miou(self, cur_ids, track_ids):
+        cur_masks = mask2rles(self.instances.pred_masks[cur_ids])
+        track_masks = mask2rles(self.get("metrics", track_ids))
+        iscrowd = [0 for _ in range(len(cur_masks))]
+        mious = mask_util.iou(track_masks, cur_masks, iscrowd)
+        return 1 - mious
+
+    def get(self, item, ids, num_samples=None, behavior=None):
+        if self.track_metric == "miou":
+            return super().get(item, ids)
+        elif self.track_metric == "pixel_embeds":
+            outs = [
+                self.tracks[id][item] for id in ids
+            ]
+            outs = [o[-1].squeeze(0) if isinstance(o, list) else o for o in outs]
+            return outs
+
+    def compute_dists_by_embeds(self, cur_ids, track_ids):
+        cur_embeds = self.instances.pixel_embeds[cur_ids].embeds_list
+        track_embeds = self.get("metrics", track_ids)
+        m, n = len(track_embeds), len(cur_embeds)
+        dists = torch.zeros((m, n), dtype=torch.float32)
+        for i in range(m):
+            p1 = track_embeds[i]
+            m1 = torch.linalg.norm(p1, dim=1)
+            for j in range(n):
+                p2 = cur_embeds[j]
+                m2 = torch.linalg.norm(p2, dim=1)
+                mod = (m1[:, None] * m2[None]).clip(min=1e-8)
+                dists[i, j] = 1 - (p1.matmul(p2.t()) / mod).mean()
+        return dists.numpy()
 
     def track(self, frame_id, **kwargs):
-        instances = self.instances
-        num_inst = len(instances)
+        num_inst = len(self.instances)
         if num_inst == 0:
-            return torch.tensor([], dtype=torch.long)
+            return torch.arange(num_inst)
 
-        # bboxes = instances.pred_boxes.tensor  # fmt: xyxy
-        # bboxes = BoxMode.convert(bboxes, BoxMode.XYXY_ABS, BoxMode.XYWH_ABS)
-        # scores = instances.scores
-        # labels = torch.full((num_inst, ), 1, dtype=torch.long)
-        assert instances.has("pred_masks")
-        masks = instances.pred_masks
+        if self.track_metric == "miou":
+            assert self.instances.has("pred_masks")
+            metrics = self.instances.pred_masks
+        elif self.track_metric == "pixel_embeds":
+            assert self.instances.has("pixel_embeds")
+            metrics = self.instances.pixel_embeds
 
-        if self.empty:
-            num_new_tracks = num_inst
-            ids = torch.arange(self.num_tracks, self.num_tracks + num_new_tracks, dtype=torch.long)
-            self.num_tracks += num_new_tracks
+        if self.empty or num_inst == 0:
+            ids = torch.arange(self.num_tracks, self.num_tracks + num_inst)
+            self.num_tracks += num_inst
         else:
             ids = torch.full((num_inst,), -1, dtype=torch.long)
-
-            active_ids = [
+            track_ids = [
                 id for id in self.ids if id not in ids
                 and self.tracks[id].frame_ids[-1] == frame_id - 1
             ]
-            if len(active_ids) > 0:
-                active_idx = torch.nonzero(ids == -1).squeeze(1)
-                track_masks = mask2rles(self.get("masks", active_ids))
-                cur_masks = mask2rles(masks[active_idx])
-                iscrowd = [0 for _ in range(len(cur_masks))]
-                ious = mask_util.iou(track_masks, cur_masks, iscrowd)
-                dists = 1 - ious
+            if len(track_ids) > 0:
+                cur_ids = torch.nonzero(ids == -1).squeeze(1)
+                if self.track_metric == "miou":
+                    dists = self.compute_dists_by_miou(cur_ids, track_ids)
+                elif self.track_metric == "pixel_embeds":
+                    dists = self.compute_dists_by_embeds(cur_ids, track_ids)  
                 row, col = linear_sum_assignment(dists)
                 for r, c in zip(row, col):
-                    dist = dists[r, c]
-                    if dist < 1 - self.match_iou_thr:
-                        ids[active_idx[c]] = active_ids[r]
+                    if dists[r, c] < 1 - self.match_thr:
+                        ids[cur_ids[c]] = track_ids[r]
 
             new_track_inds = ids == -1
             ids[new_track_inds] = torch.arange(
-                self.num_tracks,
-                self.num_tracks + new_track_inds.sum(),
-                dtype=torch.long)
+                self.num_tracks, self.num_tracks + new_track_inds.sum()
+            )
             self.num_tracks += new_track_inds.sum()
 
-        self.update(ids=ids, masks=masks, frame_ids=frame_id)
+        self.update(ids=ids, frame_ids=frame_id, metrics=metrics)
         return ids + 1
 
 

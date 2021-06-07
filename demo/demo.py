@@ -47,7 +47,8 @@ def get_parser():
     )
     parser.add_argument("--webcam", action="store_true", help="Take inputs from webcam.")
     parser.add_argument("--video-input", help="Path to video file.")
-    parser.add_argument("--track", action="store_true", help="Tracking by mask IoU.")
+    parser.add_argument("--track-by", type=str, default="", help="If non-empty, enable tracking by: miou | pixel_embeds")
+    parser.add_argument("--track-thr", type=float, default=0.7, help="confidence thresh for tracking")
     parser.add_argument("--mots-seqs", nargs="+", help="A list of space separated mots videos ids")
     parser.add_argument("--input", nargs="+", help="A list of space separated input images")
     parser.add_argument(
@@ -119,17 +120,15 @@ def infer_on_mots(args, demo):
     ]
     if args.input[1] == "train":
         mots_seqs = mots_seqs[:4]
-        out_dir = osp.join(args.output, "train")
     elif args.input[1] == "test":
         mots_seqs = mots_seqs[-4:]
-        out_dir = osp.join(args.output, "test")
     else:
         mots_seqs = [
             seq for seq in mots_seqs if seq[-2:] in args.input[1:]
         ]
-        out_dir = osp.join(args.output, "mix")
     seqs_name = [seq.split('/')[-1] for seq in mots_seqs]
     print(f"Infer on {seqs_name} ...")
+    out_dir = args.output
     if not osp.exists(out_dir):
         os.system(f"mkdir -p {out_dir}")
 
@@ -144,15 +143,15 @@ def infer_on_mots(args, demo):
         "MOTS20-12": 30,
     }
 
-    tracker = MaskTracker()
+    tracker = MaskTracker(track_metric=args.track_by, match_thr=args.track_thr)
     total_time = 0
     for seq_name, seq_path in zip(seqs_name, mots_seqs):
         img_dir = osp.join(seq_path, "img1")
         args.imgs = [osp.join(img_dir, f) for f in os.listdir(img_dir) if f.endswith(".jpg")]
         args.imgs = sorted(args.imgs)
         args.fps = mots_fps[seq_name]
+        args.mots_txt = osp.join(out_dir, f"00{seq_name[-2:]}.txt")
         args.output = osp.join(out_dir, seq_name)
-        args.mots_txt = osp.join(args.output, f"{seq_name}.txt")
         print(f"Inferring on {seq_name} ...")
         infer_time = infer_with_tracking(args, demo, tracker)
         print(f"Results saved in {args.output}, runtime: {infer_time:.2f} s")
@@ -175,11 +174,11 @@ if __name__ == "__main__":
 
     if args.input[0] == "mots":
        infer_on_mots(args, demo)
-    elif args.track:
+    elif args.track_by:
         args.imgs = [osp.join(args.input[0], fname) for fname in os.listdir(args.input[0]) if fname.endswith(".jpg")]
         args.imgs = sorted(args.imgs)
         args.fps = 30
-        tracker = MaskTracker()
+        tracker = MaskTracker(track_metric=args.track_by, match_thr=args.track_thr)
         infer_time = infer_with_tracking(args, demo, tracker)
         print(f"Inference time: {infer_time:.2f} s")
     elif args.input:

@@ -261,6 +261,21 @@ _C.MODEL.BOXINST.PAIRWISE.WARMUP_ITERS = 10000
 _C.MODEL.BOXINST.PAIRWISE.COLOR_THRESH = 0.3
 
 # ---------------------------------------------------------------------------- #
+# EmbedMask Options
+# ---------------------------------------------------------------------------- #
+# Please refer to the paper https://arxiv.org/abs/1912.01954
+_C.MODEL.PIXEL_HEAD = CN()
+
+# Whether to enable PixelHead
+_C.MODEL.PIXEL_HEAD.ENABLED = False
+_C.MODEL.PIXEL_HEAD.IN_FEATURES = ["p3",]
+_C.MODEL.PIXEL_HEAD.FPN_STRIDES = [8,]
+_C.MODEL.PIXEL_HEAD.NUM_CONVS = 4
+_C.MODEL.PIXEL_HEAD.EMBED_DIM = 16
+_C.MODEL.PIXEL_HEAD.EMBED_REDUCE_FACTOR = 1
+_C.MODEL.PIXEL_HEAD.BOX_EXPAND = 1.2
+
+# ---------------------------------------------------------------------------- #
 # TOP Module Options
 # ---------------------------------------------------------------------------- #
 _C.MODEL.TOP_MODULE = CN()

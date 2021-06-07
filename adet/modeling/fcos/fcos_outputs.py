@@ -200,6 +200,7 @@ class FCOSOutputs(nn.Module):
         labels = []
         reg_targets = []
         target_inds = []
+        track_ids = []
         xs, ys = locations[:, 0], locations[:, 1]
 
         num_targets = 0
@@ -213,6 +214,7 @@ class FCOSOutputs(nn.Module):
                 labels.append(labels_per_im.new_zeros(locations.size(0)) + self.num_classes)
                 reg_targets.append(locations.new_zeros((locations.size(0), 4)))
                 target_inds.append(labels_per_im.new_zeros(locations.size(0)) - 1)
+                track_ids.append(labels_per_im.new_zeros(locations.size(0)) - 1)
                 continue
 
             area = targets_per_im.gt_boxes.area()
@@ -256,6 +258,11 @@ class FCOSOutputs(nn.Module):
             labels_per_im = labels_per_im[locations_to_gt_inds]
             labels_per_im[locations_to_min_area == INF] = self.num_classes
 
+            if targets_per_im.has("track_ids"):
+                track_ids_per_im = targets_per_im.track_ids[locations_to_gt_inds]
+                track_ids_per_im[locations_to_min_area == INF] = -1
+                track_ids.append(track_ids_per_im)
+
             labels.append(labels_per_im)
             reg_targets.append(reg_targets_per_im)
             target_inds.append(target_inds_per_im)
@@ -263,7 +270,8 @@ class FCOSOutputs(nn.Module):
         return {
             "labels": labels,
             "reg_targets": reg_targets,
-            "target_inds": target_inds
+            "target_inds": target_inds,
+            "track_ids": track_ids
         }
 
     def losses(self, logits_pred, reg_pred, ctrness_pred, locations, gt_instances, top_feats=None):

@@ -1,9 +1,10 @@
 import os
 
 from detectron2.data.datasets.register_coco import register_coco_instances
-from detectron2.data.datasets.builtin_meta import _get_builtin_metadata
+# from detectron2.data.datasets.builtin_meta import _get_builtin_metadata
 
 from .datasets.text import register_text_instances
+from .datasets.mots import register_mots_instances
 
 # register plane reconstruction
 
@@ -62,7 +63,7 @@ def register_all_coco(root="datasets"):
         )
     for key, (image_root, json_file) in _PREDEFINED_SPLITS_MOTS.items():
         # Assume pre-defined datasets live in `./datasets`.
-        register_coco_instances(
+        register_mots_instances(
             key,
             metadata_mots,
             os.path.join(root, json_file) if "://" not in json_file else json_file,
