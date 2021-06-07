@@ -131,8 +131,8 @@ class PixelHead(nn.Module):
             per_im.pixel_embeds = PixelEmbedsList([
                 pixel_embeds_pred[
                     im_id,
-                    (locations_to_inds == i).nonzero().squeeze()
-                ]
+                    (locations_to_inds == i).nonzero()
+                ].squeeze(1)
                 for i in range(len(per_im))
             ])
 
@@ -153,11 +153,10 @@ class PixelEmbedsList:
                 return self.embeds_list[item]
         elif isinstance(item, torch.Tensor):
             if item.dtype == torch.bool:
-                assert len(item) == len(self)
-                item = item.nonzero().squeeze()
-            assert item.dtype == torch.int64
-            assert item.min() >= 0 and item.max() < len(self)
-            data = [self.embeds_list[i] for i in item]
+                data = [self.embeds_list[i] for i, j in enumerate(item) if j]
+            elif item.dtype == torch.int64:
+                assert item.min() >= 0 and item.max() < len(self)
+                data = [self.embeds_list[i] for i in item]
             return type(self)(data)
         else:
             raise IndexError("invalid index")
