@@ -85,12 +85,6 @@ class FCOS(nn.Module):
             features, top_module, self.yield_proposal
         )
 
-        results = {}
-        if self.yield_proposal:
-            results["features"] = {
-                f: b for f, b in zip(self.in_features, bbox_towers)
-            }
-
         if self.pixel_head_on:
             pixel_embeds_pred = self.pixel_head(features, locations)
 
