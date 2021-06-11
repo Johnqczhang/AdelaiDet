@@ -275,6 +275,7 @@ _C.MODEL.PIXEL_HEAD.EMBED_DIM = 16
 _C.MODEL.PIXEL_HEAD.EMBED_REDUCE_FACTOR = 1
 _C.MODEL.PIXEL_HEAD.BOX_EXPAND = 1.2
 _C.MODEL.PIXEL_HEAD.HINGE_LOSS_MARGINS = [0.2, 1.2]
+_C.MODEL.PIXEL_HEAD.FREEZE_TRAIN = False
 
 # ---------------------------------------------------------------------------- #
 # TOP Module Options

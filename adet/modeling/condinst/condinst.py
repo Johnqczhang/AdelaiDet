@@ -112,6 +112,14 @@ class CondInst(nn.Module):
         pixel_std = torch.Tensor(cfg.MODEL.PIXEL_STD).to(self.device).view(3, 1, 1)
         self.normalizer = lambda x: (x - pixel_mean) / pixel_std
         self.to(self.device)
+        self.freeze_training = cfg.MODEL.PIXEL_HEAD.FREEZE_TRAIN
+        if self.freeze_training:
+            logger.info("Some model parameters are frozen during training, only finetuning the following parameters:")
+            for name, param in self.named_parameters():
+                if "pixel_head" not in name:
+                    param.requires_grad = False
+                else:
+                    print(name)
 
     def forward(self, batched_inputs):
         if self.training and self.proposal_generator.pixel_head_on:
