@@ -42,7 +42,7 @@ class PixelHead(nn.Module):
             in_channels, self.embed_dim - 2, kernel_size=3, stride=1, padding=1, bias=True
         )
         self.position_scale = Scale(init_value=1.0)
-        self.margins = [0.5, 1.5]
+        self.hinge_margins = cfg.MODEL.PIXEL_HEAD.HINGE_LOSS_MARGINS
 
         for m in [
             self.mask_tower,
@@ -79,22 +79,20 @@ class PixelHead(nn.Module):
         for i in range(0, n, 2):
             inds1 = torch.nonzero(track_ids[i] != -1).squeeze(1)
             inds2 = torch.nonzero(track_ids[i + 1] != -1).squeeze(1)
-            num1 = len(inds1)
-            num2 = len(inds2)
-            y, x = torch.meshgrid(torch.arange(num1), torch.arange(num2))
-            y = y.reshape(-1)
-            x = x.reshape(-1)
-            p1 = pixel_embeds[i, inds1][y]
-            p2 = pixel_embeds[i + 1, inds2][x]
-            track_id1 = track_ids[i][inds1][y]
-            track_id2 = track_ids[i + 1][inds2][x]
-            cos_dist = F.cosine_similarity(p1, p2, dim=-1)
-            pos_inds = torch.nonzero(track_id1 == track_id2).squeeze(1)
-            neg_inds = torch.nonzero(track_id1 != track_id2).squeeze(1)
-            if len(pos_inds) > 0:
-                loss_pos += ((cos_dist[pos_inds] - self.margins[0]).clip(min=0)).square().mean()
-            if len(neg_inds) > 0:
-                loss_neg += ((self.margins[1] - cos_dist[neg_inds]).clip(min=0)).square().mean()
+            p1 = pixel_embeds[i, inds1]
+            p2 = pixel_embeds[i + 1, inds2]
+            m1 = torch.linalg.norm(p1, dim=1)
+            m2 = torch.linalg.norm(p2, dim=1)
+            mod = (m1[:, None] * m2[None]).clip(min=1e-8)
+            dists = 1. - p1.matmul(p2.t()) / mod
+            t1 = track_ids[i][inds1]
+            t2 = track_ids[i + 1][inds2]
+            t1, t2 = torch.meshgrid(t1, t2)
+            pos = t1 == t2
+            if pos.sum() > 0:
+                loss_pos += (dists[pos] - self.hinge_margins[0]).clip(min=0).square().mean()
+            if pos.sum() < pos.numel():
+                loss_neg += (self.hinge_margins[1] - dists[~pos]).clip(min=0).square().mean()
 
         losses["loss_pixel_embed_pos"] = loss_pos / n * 2
         losses["loss_pixel_embed_neg"] = loss_neg / n * 2
