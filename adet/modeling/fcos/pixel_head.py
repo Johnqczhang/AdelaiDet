@@ -97,8 +97,14 @@ class PixelHead(nn.Module):
             if pos.sum() < pos.numel():
                 loss_neg.append((self.hinge_margins[1] - dists[~pos]).clip(min=0).square().mean())
 
-        losses["loss_pixel_embed_pos"] = sum(loss_pos) / len(loss_pos)
-        losses["loss_pixel_embed_neg"] = sum(loss_neg) / len(loss_neg)
+        if len(loss_pos) > 0:
+            losses["loss_pixel_embed_pos"] = sum(loss_pos) / len(loss_pos)
+        else:
+            losses["loss_pixel_embed_pos"] = pixel_embeds.sum() * 0.
+        if len(loss_neg) > 0:
+            losses["loss_pixel_embed_neg"] = sum(loss_neg) / len(loss_neg)
+        else:
+            losses["loss_pixel_embed_neg"] = pixel_embeds.sum() * 0.
 
         return losses
 
