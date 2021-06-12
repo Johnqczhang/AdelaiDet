@@ -73,12 +73,15 @@ class PixelHead(nn.Module):
         n, c = pixel_embeds[0].shape[:2]
         pixel_embeds = pixel_embeds[0].permute(0, 2, 3, 1).reshape(n, -1, c)
         track_ids = training_targets["track_ids"]
-        loss_pos = pixel_embeds.sum() * 0.
-        loss_neg = pixel_embeds.sum() * 0.
+        loss_pos = []
+        loss_neg = []
 
         for i in range(0, n, 2):
-            inds1 = torch.nonzero(track_ids[i] != -1).squeeze(1)
-            inds2 = torch.nonzero(track_ids[i + 1] != -1).squeeze(1)
+            inds1 = (track_ids[i] != -1).nonzero().squeeze(1)
+            inds2 = (track_ids[i + 1] != -1).nonzero().squeeze(1)
+            if inds1.numel() == 0 or inds2.numel() == 0:
+                continue
+
             p1 = pixel_embeds[i, inds1]
             p2 = pixel_embeds[i + 1, inds2]
             m1 = torch.linalg.norm(p1, dim=1)
@@ -90,12 +93,12 @@ class PixelHead(nn.Module):
             t1, t2 = torch.meshgrid(t1, t2)
             pos = t1 == t2
             if pos.sum() > 0:
-                loss_pos += (dists[pos] - self.hinge_margins[0]).clip(min=0).square().mean()
+                loss_pos.append((dists[pos] - self.hinge_margins[0]).clip(min=0).square().mean())
             if pos.sum() < pos.numel():
-                loss_neg += (self.hinge_margins[1] - dists[~pos]).clip(min=0).square().mean()
+                loss_neg.append((self.hinge_margins[1] - dists[~pos]).clip(min=0).square().mean())
 
-        losses["loss_pixel_embed_pos"] = loss_pos / n * 2
-        losses["loss_pixel_embed_neg"] = loss_neg / n * 2
+        losses["loss_pixel_embed_pos"] = sum(loss_pos) / len(loss_pos)
+        losses["loss_pixel_embed_neg"] = sum(loss_neg) / len(loss_neg)
 
         return losses
 
