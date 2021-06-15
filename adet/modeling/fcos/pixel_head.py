@@ -1,11 +1,9 @@
 from typing import Dict
-from matplotlib.pyplot import draw
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 
-from detectron2.layers import ShapeSpec, cat
+from detectron2.layers import ShapeSpec
 from adet.modeling.fcos.fcos import Scale
 
 
@@ -42,6 +40,7 @@ class PixelHead(nn.Module):
             in_channels, self.embed_dim - 2, kernel_size=3, stride=1, padding=1, bias=True
         )
         self.position_scale = Scale(init_value=1.0)
+        self.dist_func = cfg.MODEL.PIXEL_HEAD.EMBEDS_DIST_FUNC
         self.hinge_margins = cfg.MODEL.PIXEL_HEAD.HINGE_LOSS_MARGINS
 
         for m in [
@@ -65,16 +64,30 @@ class PixelHead(nn.Module):
             pixel_other_embed = self.pixel_other_embed_pred(x)
             pixel_embed = torch.cat([pixel_spatial_embed, pixel_other_embed], dim=1)
             pixel_embeds.append(pixel_embed)
-        
+
         return pixel_embeds
+
+    def compute_embeds_distance(self, embed1, embed2):
+        # embed1: (m, embed_dim)
+        # embed2: (n, embed_dim)
+        # return: dists, (m, n)
+        if self.dist_func == "ed":
+            dists = (embed1[:, None] - embed2[None]).square().sum(dim=-1).sqrt()
+        elif self.dist_func == "cos":
+            m1 = torch.linalg.norm(embed1, dim=1)
+            m2 = torch.linalg.norm(embed2, dim=1)
+            mod = (m1[:, None] * m2[None]).clip(min=1e-8)
+            dists = 1. - embed1.matmul(embed2.t()) / mod
+        else:
+            raise ValueError(f"Incorrect embedding vector distance function: {self.dist_func}")
+        return dists
 
     def compute_losses(self, pixel_embeds, training_targets):
         losses = {}
         n, c = pixel_embeds[0].shape[:2]
         pixel_embeds = pixel_embeds[0].permute(0, 2, 3, 1).reshape(n, -1, c)
         track_ids = training_targets["track_ids"]
-        loss_pos = []
-        loss_neg = []
+        loss_pos, loss_neg = [], []
 
         for i in range(0, n, 2):
             inds1 = (track_ids[i] != -1).nonzero().squeeze(1)
@@ -82,29 +95,17 @@ class PixelHead(nn.Module):
             if inds1.numel() == 0 or inds2.numel() == 0:
                 continue
 
-            p1 = pixel_embeds[i, inds1]
-            p2 = pixel_embeds[i + 1, inds2]
-            m1 = torch.linalg.norm(p1, dim=1)
-            m2 = torch.linalg.norm(p2, dim=1)
-            mod = (m1[:, None] * m2[None]).clip(min=1e-8)
-            dists = 1. - p1.matmul(p2.t()) / mod
-            t1 = track_ids[i][inds1]
-            t2 = track_ids[i + 1][inds2]
-            t1, t2 = torch.meshgrid(t1, t2)
+            dists = self.compute_embeds_distance(pixel_embeds[i, inds1], pixel_embeds[i + 1, inds2])
+            t1, t2 = torch.meshgrid(track_ids[i][inds1], track_ids[i + 1][inds2])
             pos = t1 == t2
+            # hinge loss v1.0: count for all positive and negative pairs
             if pos.sum() > 0:
                 loss_pos.append((dists[pos] - self.hinge_margins[0]).clip(min=0).square().mean())
             if pos.sum() < pos.numel():
                 loss_neg.append((self.hinge_margins[1] - dists[~pos]).clip(min=0).square().mean())
 
-        if len(loss_pos) > 0:
-            losses["loss_pixel_embed_pos"] = sum(loss_pos) / len(loss_pos)
-        else:
-            losses["loss_pixel_embed_pos"] = pixel_embeds.sum() * 0.
-        if len(loss_neg) > 0:
-            losses["loss_pixel_embed_neg"] = sum(loss_neg) / len(loss_neg)
-        else:
-            losses["loss_pixel_embed_neg"] = pixel_embeds.sum() * 0.
+        losses["loss_pixel_embed_pos"] = sum(loss_pos) / len(loss_pos) if len(loss_pos) > 0 else pixel_embeds.sum() * 0.
+        losses["loss_pixel_embed_neg"] = sum(loss_neg) / len(loss_neg) if len(loss_neg) > 0 else pixel_embeds.sum() * 0.
 
         return losses
 

@@ -49,12 +49,13 @@ class MaskTracker(BaseTracker):
         dists = torch.zeros((m, n), dtype=torch.float32)
         for i in range(m):
             p1 = track_embeds[i]
-            m1 = torch.linalg.norm(p1, dim=1)
+            # m1 = torch.linalg.norm(p1, dim=1)
             for j in range(n):
                 p2 = cur_embeds[j]
-                m2 = torch.linalg.norm(p2, dim=1)
-                mod = (m1[:, None] * m2[None]).clip(min=1e-8)
-                dists[i, j] = 1 - (p1.matmul(p2.t()) / mod).mean()
+                # m2 = torch.linalg.norm(p2, dim=1)
+                # mod = (m1[:, None] * m2[None]).clip(min=1e-8)
+                # dists[i, j] = 1 - (p1.matmul(p2.t()) / mod).mean()
+                dists = (p1[:, None] - p2[None]).square().sum(dim=-1).sqrt()
         return dists.numpy()
 
     def track(self, frame_id, **kwargs):
