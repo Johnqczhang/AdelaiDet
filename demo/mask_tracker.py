@@ -41,35 +41,51 @@ class MaskTracker(BaseTracker):
         else:
             return super().get(item, ids, **kwargs)
 
-    def compute_dists_by_pixel_embeds(self, cur_ids, track_ids):
-        cur_embeds = self.instances.pixel_embeds[cur_ids].embeds_list
-        track_embeds = self.get("pixel_embeds", track_ids)
-        m, n = len(track_embeds), len(cur_embeds)
-        dists = torch.ones((m, n), dtype=torch.float32) * -1
+    def compute_cos_dists(self, embeds1, embeds2):
+        m, n = len(embeds1), len(embeds2)
+        dists = torch.full((m, n), -1, dtype=torch.float32)
         for i in range(m):
-            p1 = track_embeds[i]
-            if len(p1) == 0:
+            if len(embeds1[i]) == 0:
                 continue
-            # m1 = torch.linalg.norm(p1, dim=1)
+            m1 = torch.linalg.norm(embeds1[i], dim=1)
             for j in range(n):
-                p2 = cur_embeds[j]
-                if len(p2) == 0:
+                if len(embeds2[j]) == 0:
                     continue
-                # m2 = torch.linalg.norm(p2, dim=1)
-                # mod = (m1[:, None] * m2[None]).clip(min=1e-8)
-                # dists[i, j] = 1 - (p1.matmul(p2.t()) / mod).mean()
-                # Euclidean distances between each pair of embeddings
-                d_mat = (p1[:, None] - p2[None]).square().sum(dim=-1).sqrt()
-                # find the minimum distance over all pixel embeddings of p2 for each pixel of p1,
-                # then set the mean over all minimum distances of p1 as dist(p1, p2)
+                m2 = torch.linalg.norm(embeds2[j], dim=1)
+                mod = (m1[:, None] * m2[None]).clip(min=1e-8)
+                d_mat = embeds1[i].matmul(embeds2[j].t()) / mod
+                dists[i, j] = 1 - d_mat.amax(dim=1).mean()
+            dists[i][dists[i] == -1] = dists[i].max()
+        dists[dists == -1] = dists.max()
+        return dists.numpy()
+
+    def compute_l2_dists(self, embeds1, embeds2):
+        m, n = len(embeds1), len(embeds2)
+        dists = torch.full((m, n), -1, dtype=torch.float32)
+        for i in range(m):
+            if len(embeds1[i]) == 0:
+                continue
+            for j in range(n):
+                if len(embeds2[j]) == 0:
+                    continue
+                d_mat = (embeds1[i][:, None] - embeds2[j][None]).square().sum(dim=-1).sqrt()
                 dists[i, j] = d_mat.amin(dim=1).mean()
             dists[i][dists[i] == -1] = dists[i].max()
         dists[dists == -1] = dists.max()
+        return dists.numpy()
+
+    def compute_dists_by_pixel_embeds(self, cur_ids, track_ids):
+        cur_embeds = self.instances.pixel_embeds[cur_ids].embeds_list
+        track_embeds = self.get("pixel_embeds", track_ids)
+        if "l2" in self.track_metric:
+            dists = self.compute_l2_dists(track_embeds, cur_embeds)
+        elif "cos" in self.track_metric:
+            dists = self.compute_cos_dists(track_embeds, cur_embeds)
 
         if "miou" in self.track_metric:
             dists *= self.compute_dists_by_miou(cur_ids, track_ids)
 
-        return dists.numpy()
+        return dists
 
     def track(self, frame_id):
         num_inst = len(self.instances)

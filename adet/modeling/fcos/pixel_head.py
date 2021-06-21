@@ -71,7 +71,7 @@ class PixelHead(nn.Module):
         # embed1: (m, embed_dim)
         # embed2: (n, embed_dim)
         # return: dists, (m, n)
-        if self.dist_func == "ed":
+        if self.dist_func == "l2":
             dists = (embed1[:, None] - embed2[None]).square().sum(dim=-1).sqrt()
         elif self.dist_func == "cos":
             m1 = torch.linalg.norm(embed1, dim=1)
