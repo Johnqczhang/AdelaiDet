@@ -91,7 +91,7 @@ def infer_with_tracking(args, demo, tracker):
         runtime = time.time() - start_time
         infer_time += runtime
         print(
-            f"{path}: detected {len(predictions['instances'])} instances in {runtime:.2f}s"
+            f"{path}: detected {len(track_ids):2d}/{len(predictions['instances']):2d} instances in {runtime:.2f}s"
         )
         if args.mots_txt:
             mots_results = parse_mots_results(img, frame_id, tracker.instances, track_ids)

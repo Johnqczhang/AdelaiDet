@@ -27,50 +27,62 @@ class MaskTracker(BaseTracker):
 
     def compute_dists_by_miou(self, cur_ids, track_ids):
         cur_masks = mask2rles(self.instances.pred_masks[cur_ids])
-        track_masks = mask2rles(self.get("metrics", track_ids))
+        track_masks = mask2rles(self.get("masks", track_ids))
         iscrowd = [0 for _ in range(len(cur_masks))]
         mious = mask_util.iou(track_masks, cur_masks, iscrowd)
         return 1 - mious
 
-    def get(self, item, ids, num_samples=None, behavior=None):
-        if self.track_metric == "miou":
-            return super().get(item, ids)
-        elif self.track_metric == "pixel_embeds":
+    def get(self, item, ids, **kwargs):
+        if item == "pixel_embeds":
             outs = [
-                self.tracks[id][item] for id in ids
+                self.tracks[id][item][-1][0] for id in ids
             ]
-            outs = [o[-1].squeeze(0) if isinstance(o, list) else o for o in outs]
             return outs
+        else:
+            return super().get(item, ids, **kwargs)
 
-    def compute_dists_by_embeds(self, cur_ids, track_ids):
+    def compute_dists_by_pixel_embeds(self, cur_ids, track_ids):
         cur_embeds = self.instances.pixel_embeds[cur_ids].embeds_list
-        track_embeds = self.get("metrics", track_ids)
+        track_embeds = self.get("pixel_embeds", track_ids)
         m, n = len(track_embeds), len(cur_embeds)
-        dists = torch.zeros((m, n), dtype=torch.float32)
+        dists = torch.ones((m, n), dtype=torch.float32) * -1
         for i in range(m):
             p1 = track_embeds[i]
+            if len(p1) == 0:
+                continue
             # m1 = torch.linalg.norm(p1, dim=1)
             for j in range(n):
                 p2 = cur_embeds[j]
+                if len(p2) == 0:
+                    continue
                 # m2 = torch.linalg.norm(p2, dim=1)
                 # mod = (m1[:, None] * m2[None]).clip(min=1e-8)
                 # dists[i, j] = 1 - (p1.matmul(p2.t()) / mod).mean()
-                dists = (p1[:, None] - p2[None]).square().sum(dim=-1).sqrt()
+                # Euclidean distances between each pair of embeddings
+                d_mat = (p1[:, None] - p2[None]).square().sum(dim=-1).sqrt()
+                # find the minimum distance over all pixel embeddings of p2 for each pixel of p1,
+                # then set the mean over all minimum distances of p1 as dist(p1, p2)
+                dists[i, j] = d_mat.amin(dim=1).mean()
+            dists[i][dists[i] == -1] = dists[i].max()
+        dists[dists == -1] = dists.max()
+
+        if "miou" in self.track_metric:
+            dists *= self.compute_dists_by_miou(cur_ids, track_ids)
+
         return dists.numpy()
 
-    def track(self, frame_id, **kwargs):
+    def track(self, frame_id):
         num_inst = len(self.instances)
         if num_inst == 0:
             return torch.arange(num_inst)
 
-        if self.track_metric == "miou":
-            assert self.instances.has("pred_masks")
-            metrics = self.instances.pred_masks
-        elif self.track_metric == "pixel_embeds":
+        assert self.instances.has("pred_masks")
+        metrics = dict(masks=self.instances.pred_masks)
+        if "pxeb" in self.track_metric:  # "pxeb" means pixel embeds
             assert self.instances.has("pixel_embeds")
-            metrics = self.instances.pixel_embeds
+            metrics["pixel_embeds"] = self.instances.pixel_embeds.embeds_list
 
-        if self.empty or num_inst == 0:
+        if self.empty:
             ids = torch.arange(self.num_tracks, self.num_tracks + num_inst)
             self.num_tracks += num_inst
         else:
@@ -78,13 +90,14 @@ class MaskTracker(BaseTracker):
             track_ids = [
                 id for id in self.ids if id not in ids
                 and self.tracks[id].frame_ids[-1] == frame_id - 1
+                # and self.tracks[id].frame_ids[-1] > frame_id - self.num_frames_retain
             ]
             if len(track_ids) > 0:
-                cur_ids = torch.nonzero(ids == -1).squeeze(1)
+                cur_ids = torch.arange(num_inst)
                 if self.track_metric == "miou":
                     dists = self.compute_dists_by_miou(cur_ids, track_ids)
-                elif self.track_metric == "pixel_embeds":
-                    dists = self.compute_dists_by_embeds(cur_ids, track_ids)  
+                elif "pxeb" in self.track_metric:
+                    dists = self.compute_dists_by_pixel_embeds(cur_ids, track_ids)  
                 row, col = linear_sum_assignment(dists)
                 for r, c in zip(row, col):
                     if dists[r, c] < 1 - self.match_thr:
@@ -96,7 +109,7 @@ class MaskTracker(BaseTracker):
             )
             self.num_tracks += new_track_inds.sum()
 
-        self.update(ids=ids, frame_ids=frame_id, metrics=metrics)
+        self.update(ids=ids, frame_ids=frame_id, **metrics)
         return ids + 1
 
 
