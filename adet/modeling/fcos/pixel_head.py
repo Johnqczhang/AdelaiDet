@@ -88,6 +88,7 @@ class PixelHead(nn.Module):
         pixel_embeds = pixel_embeds[0].permute(0, 2, 3, 1).reshape(n, -1, c)
         track_ids = training_targets["track_ids"]
         loss_pos, loss_neg = [], []
+        loss_hard = []
 
         for i in range(0, n, 2):
             inds1 = (track_ids[i] != -1).nonzero().squeeze(1)
@@ -98,14 +99,27 @@ class PixelHead(nn.Module):
             dists = self.compute_embeds_distance(pixel_embeds[i, inds1], pixel_embeds[i + 1, inds2])
             t1, t2 = torch.meshgrid(track_ids[i][inds1], track_ids[i + 1][inds2])
             pos = t1 == t2
-            # hinge loss v1.0: count for all positive and negative pairs
-            if pos.sum() > 0:
+            # v1.0: hinge loss, count for all positive and negative pairs
+            if self.hinge_margins[0] > 0 and pos.sum() > 0:
                 loss_pos.append((dists[pos] - self.hinge_margins[0]).clip(min=0).square().mean())
-            if pos.sum() < pos.numel():
+            if self.hinge_margins[1] > 0 and pos.sum() < pos.numel():
                 loss_neg.append((self.hinge_margins[1] - dists[~pos]).clip(min=0).square().mean())
 
-        losses["loss_pixel_embed_pos"] = sum(loss_pos) / len(loss_pos) if len(loss_pos) > 0 else pixel_embeds.sum() * 0.
-        losses["loss_pixel_embed_neg"] = sum(loss_neg) / len(loss_neg) if len(loss_neg) > 0 else pixel_embeds.sum() * 0.
+            # v1.1: hard triplet loss
+            if self.hinge_margins[2] > 0:
+                positives = dists * pos
+                negatives = dists * (~pos)
+                loss1 = (positives.amax(dim=1) - negatives.amin(dim=1) + self.hinge_margins[2]).clip(min=0).mean()
+                loss2 = (positives.amax(dim=0) - negatives.amin(dim=0) + self.hinge_margins[2]).clip(min=0).mean()
+                loss_hard.append(loss1)
+                loss_hard.append(loss2)
+
+        if self.hinge_margins[0] > 0:
+            losses["loss_pixel_embed_pos"] = sum(loss_pos) / len(loss_pos) if len(loss_pos) > 0 else pixel_embeds.sum() * 0.
+        if self.hinge_margins[1] > 0:
+            losses["loss_pixel_embed_neg"] = sum(loss_neg) / len(loss_neg) if len(loss_neg) > 0 else pixel_embeds.sum() * 0.
+        if self.hinge_margins[2] > 0:
+            losses["loss_pixel_embed_hard"] = sum(loss_hard) / len(loss_hard) if len(loss_hard) > 0 else pixel_embeds.sum() * 0.
 
         return losses
 

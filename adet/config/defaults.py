@@ -276,7 +276,8 @@ _C.MODEL.PIXEL_HEAD.EMBED_REDUCE_FACTOR = 1
 _C.MODEL.PIXEL_HEAD.BOX_EXPAND = 1.2
 # "l2": euclidean distance | "cos": cosine distance
 _C.MODEL.PIXEL_HEAD.EMBEDS_DIST_FUNC = "l2"
-_C.MODEL.PIXEL_HEAD.HINGE_LOSS_MARGINS = [0.2, 1.2]
+# the third margin is for hard positives and hard negatives
+_C.MODEL.PIXEL_HEAD.HINGE_LOSS_MARGINS = [0.2, 1.2, 0.0]
 _C.MODEL.PIXEL_HEAD.FREEZE_TRAIN = False
 
 # ---------------------------------------------------------------------------- #
