@@ -122,7 +122,7 @@ class CondInst(nn.Module):
                     print(name)
 
     def forward(self, batched_inputs):
-        if self.training and self.proposal_generator.pixel_head_on:
+        if self.training and self.proposal_generator.has_pixel_head():
             # convert the format as the same as the previous
             batched_inputs = reduce(
                 lambda x,y: x+y, list(map(lambda x: x["pair_data"], batched_inputs))
@@ -187,6 +187,23 @@ class CondInst(nn.Module):
                 width = input_per_image.get("width", image_size[1])
 
                 instances_per_im = pred_instances_w_masks[pred_instances_w_masks.im_inds == im_id]
+                if self.proposal_generator.has_pixel_head() and len(instances_per_im) > 0:
+                    if self.proposal_generator.pixel_head.is_sample_mask_ctr() and instances_per_im.has("pred_global_masks"):
+                        mask_h, mask_w = instances_per_im.pred_global_masks.size()[-2:]
+                        factor_h = padded_im_h // mask_h
+                        factor_w = padded_im_w // mask_w
+                        assert factor_h == factor_w
+                        factor = factor_h
+                        bitmasks = aligned_bilinear(
+                            instances_per_im.pred_global_masks, factor
+                        )
+                        instances_per_im.bitmasks = (bitmasks[:, 0] > 0.5).float()
+                    instances_per_im = self.proposal_generator.pixel_head.postprocess(
+                        im_id, instances_per_im
+                    )
+                    if instances_per_im.has("bitmasks"):
+                        instances_per_im.remove("bitmasks")
+
                 instances_per_im = self.postprocess(
                     instances_per_im, height, width,
                     padded_im_h, padded_im_w

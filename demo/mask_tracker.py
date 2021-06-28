@@ -56,7 +56,7 @@ class MaskTracker(BaseTracker):
                 d_mat = embeds1[i].matmul(embeds2[j].t()) / mod
                 dists[i, j] = 1 - d_mat.amax(dim=1).mean()
             dists[i][dists[i] == -1] = dists[i].max()
-        dists[dists == -1] = dists.max()
+        dists = dists.where(dists != -1, dists.amax(dim=0))
         return dists.numpy()
 
     def compute_l2_dists(self, embeds1, embeds2):
@@ -71,7 +71,7 @@ class MaskTracker(BaseTracker):
                 d_mat = (embeds1[i][:, None] - embeds2[j][None]).square().sum(dim=-1).sqrt()
                 dists[i, j] = d_mat.amin(dim=1).mean()
             dists[i][dists[i] == -1] = dists[i].max()
-        dists[dists == -1] = dists.max()
+        dists = dists.where(dists != -1, dists.amax(dim=0))
         return dists.numpy()
 
     def compute_dists_by_pixel_embeds(self, cur_ids, track_ids):

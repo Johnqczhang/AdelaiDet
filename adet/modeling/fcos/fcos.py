@@ -55,10 +55,12 @@ class FCOS(nn.Module):
 
         self.fcos_outputs = FCOSOutputs(cfg)
 
-        self.pixel_head_on = cfg.MODEL.PIXEL_HEAD.ENABLED
-        if self.pixel_head_on:
+        if cfg.MODEL.PIXEL_HEAD.ENABLED:
             from .pixel_head import build_pixel_head
             self.pixel_head = build_pixel_head(cfg, input_shape)
+
+    def has_pixel_head(self):
+        return hasattr(self, "pixel_head")
 
     def forward_head(self, features, top_module=None):
         features = [features[f] for f in self.in_features]
@@ -85,8 +87,8 @@ class FCOS(nn.Module):
             features, top_module, self.yield_proposal
         )
 
-        if self.pixel_head_on:
-            pixel_embeds_pred = self.pixel_head(features, locations)
+        if self.has_pixel_head():
+            self.pixel_head(features, locations)
 
         if self.training:
             results, losses = self.fcos_outputs.losses(
@@ -101,15 +103,13 @@ class FCOS(nn.Module):
                         locations, images.image_sizes, top_feats
                     )
 
-            if self.pixel_head_on:
+            if self.has_pixel_head():
                 num_loc = len(locations[0])
                 loc_to_size_range = locations[0].new_tensor([-1, INF])[None].expand(num_loc, -1)
                 training_targets = self.fcos_outputs.compute_targets_for_locations(
                     locations[0], gt_instances, loc_to_size_range, [num_loc]
                 )
-                losses.update(self.pixel_head.compute_losses(
-                    pixel_embeds_pred, training_targets
-                ))
+                losses.update(self.pixel_head.losses(training_targets))
 
             return results, losses
         else:
@@ -117,10 +117,6 @@ class FCOS(nn.Module):
                 logits_pred, reg_pred, ctrness_pred,
                 locations, images.image_sizes, top_feats
             )
-            if self.pixel_head_on:
-                results = self.pixel_head.assign_pixels_to_proposals(
-                    results, locations[0], pixel_embeds_pred[0]
-                )
 
             return results, {}
 

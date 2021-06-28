@@ -15,6 +15,9 @@ class PixelHead(nn.Module):
     def __init__(self, cfg, input_shape: Dict[str, ShapeSpec]):
         super().__init__()
         self.in_features = cfg.MODEL.PIXEL_HEAD.IN_FEATURES
+        self.strides = cfg.MODEL.PIXEL_HEAD.FPN_STRIDES
+        self.center_sample = cfg.MODEL.FCOS.CENTER_SAMPLE
+        self.radius = cfg.MODEL.FCOS.POS_RADIUS
         num_convs = cfg.MODEL.PIXEL_HEAD.NUM_CONVS
         in_channels = [input_shape[f].channels for f in self.in_features]
         in_channels = in_channels[0]
@@ -42,6 +45,7 @@ class PixelHead(nn.Module):
         self.position_scale = Scale(init_value=1.0)
         self.dist_func = cfg.MODEL.PIXEL_HEAD.EMBEDS_DIST_FUNC
         self.hinge_margins = cfg.MODEL.PIXEL_HEAD.HINGE_LOSS_MARGINS
+        self.sample_ctr_on = cfg.MODEL.PIXEL_HEAD.SAMPLE_CTR_ON
 
         for m in [
             self.mask_tower,
@@ -52,8 +56,12 @@ class PixelHead(nn.Module):
                     nn.init.normal_(l.weight, std=0.01)
                     nn.init.constant_(l.bias, 0)
 
+    def is_sample_mask_ctr(self):
+        return self.sample_ctr_on == "mask"
+
     def forward(self, features, locations):
-        pixel_embeds = []
+        self.pixel_embeds = []
+        self.locations = locations
         for i in range(len(self.in_features)):
             x = self.mask_tower(features[i]) / self.embed_reduce_factor
             n, c, h, w = x.size()
@@ -63,9 +71,8 @@ class PixelHead(nn.Module):
             pixel_spatial_embed = self.pixel_spatial_embed_pred(x) + scaled_coords
             pixel_other_embed = self.pixel_other_embed_pred(x)
             pixel_embed = torch.cat([pixel_spatial_embed, pixel_other_embed], dim=1)
-            pixel_embeds.append(pixel_embed)
-
-        return pixel_embeds
+            pixel_embed = pixel_embed.permute(0, 2, 3, 1).reshape(n, -1, self.embed_dim)
+            self.pixel_embeds.append(pixel_embed)
 
     def compute_embeds_distance(self, embed1, embed2):
         # embed1: (m, embed_dim)
@@ -82,11 +89,11 @@ class PixelHead(nn.Module):
             raise ValueError(f"Incorrect embedding vector distance function: {self.dist_func}")
         return dists
 
-    def compute_losses(self, pixel_embeds, training_targets):
-        losses = {}
-        n, c = pixel_embeds[0].shape[:2]
-        pixel_embeds = pixel_embeds[0].permute(0, 2, 3, 1).reshape(n, -1, c)
+    def losses(self, training_targets):
+        pixel_embeds = self.pixel_embeds[0]
+        n = pixel_embeds.shape[0]
         track_ids = training_targets["track_ids"]
+        pxeb_losses = {}
         loss_pos, loss_neg = [], []
         loss_hard = []
 
@@ -105,60 +112,113 @@ class PixelHead(nn.Module):
             if self.hinge_margins[1] > 0 and pos.sum() < pos.numel():
                 loss_neg.append((self.hinge_margins[1] - dists[~pos]).clip(min=0).square().mean())
 
-            # v1.1: hard triplet loss
+            # v1.1: hard triplet loss, each location must have both positive and negative pairs
             if self.hinge_margins[2] > 0:
-                positives = dists * pos
-                negatives = dists * (~pos)
-                loss1 = (positives.amax(dim=1) - negatives.amin(dim=1) + self.hinge_margins[2]).clip(min=0).mean()
-                loss2 = (positives.amax(dim=0) - negatives.amin(dim=0) + self.hinge_margins[2]).clip(min=0).mean()
-                loss_hard.append(loss1)
-                loss_hard.append(loss2)
+                dists_pos = dists * pos
+                # since we want to find the minimum distance among negative pairs,
+                # we set the distance of positive pairs to a very large value
+                dists_neg = torch.where(pos, dists.new_tensor(10000.), dists)
+                idx1 = (pos.sum(dim=1) > 0) & (pos.sum(dim=1) < dists.shape[0])
+                idx2 = (pos.sum(dim=0) > 0) & (pos.sum(dim=0) < dists.shape[1])
+                if idx1.sum() > 0:
+                    loss = (dists_pos.amax(dim=1) - dists_neg.amin(dim=1) + self.hinge_margins[2]).clip(min=0) * idx1
+                    loss_hard.append(loss.sum() / idx1.sum())
+                if idx2.sum() > 0:
+                    loss = (dists_pos.amax(dim=0) - dists_neg.amin(dim=0) + self.hinge_margins[2]).clip(min=0) * idx2
+                    loss_hard.append(loss.sum() / idx2.sum())
 
         if self.hinge_margins[0] > 0:
-            losses["loss_pixel_embed_pos"] = sum(loss_pos) / len(loss_pos) if len(loss_pos) > 0 else pixel_embeds.sum() * 0.
+            pxeb_losses["loss_pxeb_pos"] = sum(loss_pos) / len(loss_pos) if len(loss_pos) > 0 else pixel_embeds.sum() * 0.
         if self.hinge_margins[1] > 0:
-            losses["loss_pixel_embed_neg"] = sum(loss_neg) / len(loss_neg) if len(loss_neg) > 0 else pixel_embeds.sum() * 0.
+            pxeb_losses["loss_pxeb_neg"] = sum(loss_neg) / len(loss_neg) if len(loss_neg) > 0 else pixel_embeds.sum() * 0.
         if self.hinge_margins[2] > 0:
-            losses["loss_pixel_embed_hard"] = sum(loss_hard) / len(loss_hard) if len(loss_hard) > 0 else pixel_embeds.sum() * 0.
+            pxeb_losses["loss_pxeb_hard"] = sum(loss_hard) / len(loss_hard) if len(loss_hard) > 0 else pixel_embeds.sum() * 0.
 
-        return losses
+        return pxeb_losses
 
-    def assign_pixels_to_proposals(self, proposals, locations, pixel_embeds_pred):
-        xs, ys = locations[:, 0], locations[:, 1]
+    def get_sample_region(self, boxes, strides, num_loc_list, loc_xs, loc_ys, bitmasks=None, radius=1):
+        if bitmasks is not None:
+            _, h, w = bitmasks.size()
+            ys = torch.arange(0, h, dtype=torch.float32, device=bitmasks.device)
+            xs = torch.arange(0, w, dtype=torch.float32, device=bitmasks.device)
+
+            m00 = bitmasks.sum(dim=-1).sum(dim=-1).clamp(min=1e-6)
+            m10 = (bitmasks * xs).sum(dim=-1).sum(dim=-1)
+            m01 = (bitmasks * ys[:, None]).sum(dim=-1).sum(dim=-1)
+            center_x = m10 / m00
+            center_y = m01 / m00
+        else:
+            center_x = boxes[..., [0, 2]].sum(dim=-1) * 0.5
+            center_y = boxes[..., [1, 3]].sum(dim=-1) * 0.5
+
+        N = len(boxes)
+        K = len(loc_xs)
+        boxes = boxes[None].expand(K, N, 4)
+        center_x = center_x[None].expand(K, N)
+        center_y = center_y[None].expand(K, N)
+        center_pt = boxes.new_zeros(boxes.shape)
+
+        beg = 0
+        for level, num_loc in enumerate(num_loc_list):
+            end = beg + num_loc
+            stride = strides[level] * radius
+            xmin = center_x[beg:end] - stride
+            ymin = center_y[beg:end] - stride
+            xmax = center_x[beg:end] + stride
+            ymax = center_y[beg:end] + stride
+            # limit sample region in box
+            center_pt[beg:end, :, 0] = torch.where(xmin > boxes[beg:end, :, 0], xmin, boxes[beg:end, :, 0])
+            center_pt[beg:end, :, 1] = torch.where(ymin > boxes[beg:end, :, 1], ymin, boxes[beg:end, :, 1])
+            center_pt[beg:end, :, 2] = torch.where(xmax > boxes[beg:end, :, 2], boxes[beg:end, :, 2], xmax)
+            center_pt[beg:end, :, 3] = torch.where(ymax > boxes[beg:end, :, 3], boxes[beg:end, :, 3], ymax)
+            beg = end
+        left = loc_xs[:, None] - center_pt[..., 0]
+        right = center_pt[..., 2] - loc_xs[:, None]
+        top = loc_ys[:, None] - center_pt[..., 1]
+        bottom = center_pt[..., 3] - loc_ys[:, None]
+        center_bbox = torch.stack((left, top, right, bottom), -1)
+        inside_gt_bbox_mask = center_bbox.amin(dim=-1) > 0
+        return inside_gt_bbox_mask
+
+    def postprocess(self, im_id, pred_instances):
+        pred_instances = pred_instances[pred_instances.pred_classes == 0]
+        if len(pred_instances) == 0:
+            return pred_instances
+
+        pixel_embeds = self.pixel_embeds[0]
+        xs, ys = self.locations[0][:, 0], self.locations[0][:, 1]
         num_loc = len(xs)
         INF = 100000000
-        n, c = pixel_embeds_pred.shape[:2]
-        pixel_embeds_pred = pixel_embeds_pred.permute(0, 2, 3, 1).reshape(n, -1, c)
+        pred_boxes = pred_instances.pred_boxes.tensor
+        area = pred_instances.pred_boxes.area()
+        l = xs[:, None] - pred_boxes[:, 0][None]
+        t = ys[:, None] - pred_boxes[:, 1][None]
+        r = pred_boxes[:, 2][None] - xs[:, None]
+        b = pred_boxes[:, 3][None] - ys[:, None]
+        reg_per_im = torch.stack([l, t, r, b], dim=2)
 
-        for im_id, per_im in enumerate(proposals):
-            pred_boxes = per_im.pred_boxes.tensor
-            if pred_boxes.numel() == 0:
-                continue
+        if self.center_sample:
+            bitmasks = pred_instances.bitmasks if pred_instances.has("bitmasks") else None
+            is_in_boxes = self.get_sample_region(
+                pred_boxes, self.strides, [num_loc], xs, ys,
+                bitmasks=bitmasks, radius=self.radius
+            )
+        else:
+            is_in_boxes = reg_per_im.amin(dim=2) > 0
 
-            area = per_im.pred_boxes.area()
-            l = xs[:, None] - pred_boxes[:, 0][None]
-            t = ys[:, None] - pred_boxes[:, 1][None]
-            r = pred_boxes[:, 2][None] - xs[:, None]
-            b = pred_boxes[:, 3][None] - ys[:, None]
-            reg_per_im = torch.stack([l, t, r, b], dim=2)
+        locations_to_area = area[None].repeat(num_loc, 1)
+        locations_to_area[~is_in_boxes] = INF
+        locations_to_min_area, locations_to_inds = locations_to_area.min(dim=1)
+        locations_to_inds[locations_to_min_area == INF] = -1
+        pred_instances.pixel_embeds = PixelEmbedsList([
+            pixel_embeds[
+                im_id,
+                (locations_to_inds == i).nonzero()
+            ].squeeze(1)
+            for i in range(len(pred_instances))
+        ])
 
-            is_in_boxes = reg_per_im.min(dim=2)[0] > 0
-            locations_to_area = area[None].repeat(num_loc, 1)
-            locations_to_area[~is_in_boxes] = INF
-            locations_to_min_area, locations_to_inds = locations_to_area.min(dim=1)
-
-            pred_classes = per_im.pred_classes[locations_to_inds]
-            pred_classes[locations_to_min_area == INF] = 80
-            locations_to_inds[pred_classes != 0] = -1
-            per_im.pixel_embeds = PixelEmbedsList([
-                pixel_embeds_pred[
-                    im_id,
-                    (locations_to_inds == i).nonzero()
-                ].squeeze(1)
-                for i in range(len(per_im))
-            ])
-
-        return proposals
+        return pred_instances
 
 
 class PixelEmbedsList:

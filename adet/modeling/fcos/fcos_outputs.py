@@ -172,8 +172,8 @@ class FCOSOutputs(nn.Module):
         center_y = center_y[None].expand(K, num_gts)
         center_gt = boxes.new_zeros(boxes.shape)
         # no gt
-        if center_x.numel() == 0 or center_x[..., 0].sum() == 0:
-            return loc_xs.new_zeros(loc_xs.shape, dtype=torch.uint8)
+        # if center_x.numel() == 0 or center_x[..., 0].sum() == 0:
+        #     return loc_xs.new_zeros(loc_xs.shape, dtype=torch.uint8)
         beg = 0
         for level, num_loc in enumerate(num_loc_list):
             end = beg + num_loc
