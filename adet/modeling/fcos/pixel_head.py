@@ -1,6 +1,7 @@
 from typing import Dict
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 from detectron2.layers import ShapeSpec
@@ -109,9 +110,9 @@ class PixelHead(nn.Module):
             pos = t1 == t2
             # v1.0: hinge loss, count for all positive and negative pairs
             if self.hinge_margins[0] > 0 and pos.sum() > 0:
-                loss_pos.append((dists[pos] - self.hinge_margins[0]).clip(min=0).square().mean())
+                loss_pos.append(F.relu(dists[pos] - self.hinge_margins[0]).square().mean())
             if self.hinge_margins[1] > 0 and pos.sum() < pos.numel():
-                loss_neg.append((self.hinge_margins[1] - dists[~pos]).clip(min=0).square().mean())
+                loss_neg.append(F.relu(self.hinge_margins[1] - dists[~pos]).square().mean())
 
             # v1.1: hard triplet loss, each location must have both positive and negative pairs
             if self.hinge_margins[2] > 0:
@@ -122,10 +123,10 @@ class PixelHead(nn.Module):
                 idx1 = (pos.sum(dim=1) > 0) & (pos.sum(dim=1) < dists.shape[0])
                 idx2 = (pos.sum(dim=0) > 0) & (pos.sum(dim=0) < dists.shape[1])
                 if idx1.sum() > 0:
-                    loss = (dists_pos.amax(dim=1) - dists_neg.amin(dim=1) + self.hinge_margins[2]).clip(min=0) * idx1
+                    loss = F.relu(dists_pos.amax(dim=1) - dists_neg.amin(dim=1) + self.hinge_margins[2]) * idx1
                     loss_hard.append(loss.sum() / idx1.sum())
                 if idx2.sum() > 0:
-                    loss = (dists_pos.amax(dim=0) - dists_neg.amin(dim=0) + self.hinge_margins[2]).clip(min=0) * idx2
+                    loss = F.relu(dists_pos.amax(dim=0) - dists_neg.amin(dim=0) + self.hinge_margins[2]) * idx2
                     loss_hard.append(loss.sum() / idx2.sum())
 
         if self.hinge_margins[0] > 0:
@@ -154,13 +155,13 @@ class PixelHead(nn.Module):
             pos = t1 == t2
             # v1.0: hinge loss, count for all positive and negative pairs
             if self.hinge_margins[0] > 0 and pos.sum() > 0:
-                loss_pos.append((dists[pos] - self.hinge_margins[0]).clip(min=0).square().mean())
+                loss_pos.append(F.relu(dists[pos] - self.hinge_margins[0]).square().mean())
             if self.hinge_margins[1] > 0 and (~pos).sum() > 0:
-                loss_neg.append((self.hinge_margins[1] - dists[~pos]).clip(min=0).square().mean())
+                loss_neg.append(F.relu(self.hinge_margins[1] - dists[~pos]).square().mean())
 
             # v1.1: hard triplet loss
             if self.hinge_margins[2] > 0:
-                loss = (dists[pos].amax() - dists[~pos].amin() + self.hinge_margins[2]).clip(min=0)
+                loss = F.relu(dists[pos].amax() - dists[~pos].amin() + self.hinge_margins[2])
                 loss_hard.append(loss)
 
         if self.hinge_margins[0] > 0:
