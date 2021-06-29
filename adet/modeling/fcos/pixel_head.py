@@ -46,6 +46,7 @@ class PixelHead(nn.Module):
         self.dist_func = cfg.MODEL.PIXEL_HEAD.EMBEDS_DIST_FUNC
         self.hinge_margins = cfg.MODEL.PIXEL_HEAD.HINGE_LOSS_MARGINS
         self.sample_ctr_on = cfg.MODEL.PIXEL_HEAD.SAMPLE_CTR_ON
+        self.loss_intra_frame_on = cfg.MODEL.PIXEL_HEAD.LOSS_INTRA_FRAME_ON
 
         for m in [
             self.mask_tower,
@@ -133,8 +134,42 @@ class PixelHead(nn.Module):
             pxeb_losses["loss_pxeb_neg"] = sum(loss_neg) / len(loss_neg) if len(loss_neg) > 0 else pixel_embeds.sum() * 0.
         if self.hinge_margins[2] > 0:
             pxeb_losses["loss_pxeb_hard"] = sum(loss_hard) / len(loss_hard) if len(loss_hard) > 0 else pixel_embeds.sum() * 0.
+        if self.loss_intra_frame_on:
+            pxeb_losses.update(self.intra_frame_losses(pixel_embeds, track_ids))
 
         return pxeb_losses
+
+    def intra_frame_losses(self, pixel_embeds, track_ids):
+        losses = {}
+        loss_pos, loss_neg, loss_hard = [], [], []
+
+        for i, t_id in enumerate(track_ids):
+            inds = (t_id != -1).nonzero().squeeze(1)
+            if inds.numel() == 0:
+                continue
+
+            # symmetric matrix
+            dists = self.compute_embeds_distance(pixel_embeds[i, inds], pixel_embeds[i, inds])
+            t1, t2 = torch.meshgrid(t_id[inds], t_id[inds])
+            pos = t1 == t2
+            # v1.0: hinge loss, count for all positive and negative pairs
+            if self.hinge_margins[0] > 0 and pos.sum() > 0:
+                loss_pos.append((dists[pos] - self.hinge_margins[0]).clip(min=0).square().mean())
+            if self.hinge_margins[1] > 0 and (~pos).sum() > 0:
+                loss_neg.append((self.hinge_margins[1] - dists[~pos]).clip(min=0).square().mean())
+
+            # v1.1: hard triplet loss
+            if self.hinge_margins[2] > 0:
+                loss = (dists[pos].amax() - dists[~pos].amin() + self.hinge_margins[2]).clip(min=0)
+                loss_hard.append(loss)
+
+        if self.hinge_margins[0] > 0:
+            losses["loss_pxeb_intra_pos"] = sum(loss_pos) / len(loss_pos) if len(loss_pos) > 0 else pixel_embeds.sum() * 0.
+        if self.hinge_margins[1] > 0:
+            losses["loss_pxeb_intra_neg"] = sum(loss_neg) / len(loss_neg) if len(loss_neg) > 0 else pixel_embeds.sum() * 0.
+        if self.hinge_margins[2] > 0:
+            losses["loss_pxeb_intra_hard"] = sum(loss_hard) / len(loss_hard) if len(loss_hard) > 0 else pixel_embeds.sum() * 0.
+        return losses
 
     def get_sample_region(self, boxes, strides, num_loc_list, loc_xs, loc_ys, bitmasks=None, radius=1):
         if bitmasks is not None:
