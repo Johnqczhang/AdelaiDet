@@ -153,16 +153,22 @@ class PixelHead(nn.Module):
             dists = self.compute_embeds_distance(pixel_embeds[i, inds], pixel_embeds[i, inds])
             t1, t2 = torch.meshgrid(t_id[inds], t_id[inds])
             pos = t1 == t2
-            # v1.0: hinge loss, count for all positive and negative pairs
+            # v1.0: hinge loss, only consider the upper triangular part
             if self.hinge_margins[0] > 0 and pos.sum() > 0:
-                loss_pos.append(F.relu(dists[pos] - self.hinge_margins[0]).square().mean())
+                idx = pos.triu(diagonal=1)
+                loss_pos.append(F.relu(dists[idx] - self.hinge_margins[0]).square().mean())
             if self.hinge_margins[1] > 0 and (~pos).sum() > 0:
-                loss_neg.append(F.relu(self.hinge_margins[1] - dists[~pos]).square().mean())
+                idx = (~pos).triu(diagonal=1)
+                loss_neg.append(F.relu(self.hinge_margins[1] - dists[idx]).square().mean())
 
             # v1.1: hard triplet loss
             if self.hinge_margins[2] > 0:
-                loss = F.relu(dists[pos].amax() - dists[~pos].amin() + self.hinge_margins[2])
-                loss_hard.append(loss)
+                dists_pos = dists * pos
+                dists_neg = torch.where(pos, dists.new_tensor(10000.), dists)
+                idx = (pos.sum(dim=1) > 0) & (pos.sum(dim=1) < dists.shape[0])
+                if idx.sum() > 0:
+                    loss = F.relu(dists_pos.amax(dim=1) - dists_neg.amin(dim=1) + self.hinge_margins[2]) * idx
+                    loss_hard.append(loss.sum() / idx.sum())
 
         if self.hinge_margins[0] > 0:
             losses["loss_pxeb_intra_pos"] = sum(loss_pos) / len(loss_pos) if len(loss_pos) > 0 else pixel_embeds.sum() * 0.
