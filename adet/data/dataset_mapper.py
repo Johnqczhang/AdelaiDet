@@ -79,7 +79,7 @@ class DatasetMapperWithBasis(DatasetMapper):
         self.basis_loss_on = cfg.MODEL.BASIS_MODULE.LOSS_ON
         self.ann_set = cfg.MODEL.BASIS_MODULE.ANN_SET
         self.boxinst_enabled = cfg.MODEL.BOXINST.ENABLED
-        self.track_enabled = cfg.MODEL.PIXEL_HEAD.ENABLED
+        self.track_enabled = cfg.MODEL.EMBEDINST.ENABLED
 
         if self.boxinst_enabled:
             self.use_instance_mask = False
@@ -185,8 +185,15 @@ class DatasetMapperWithBasis(DatasetMapper):
                 annos, image_shape, mask_format=self.instance_mask_format
             )
             if self.track_enabled:
-                track_ids = [int(obj["track_id"]) for obj in annos]
-                instances.track_ids = torch.as_tensor(track_ids, dtype=torch.int64)
+                instances.video_ids = torch.as_tensor(
+                    [int(dataset_dict["video_id"]) for _ in annos], dtype=torch.int64 
+                )
+                instances.frame_ids = torch.as_tensor(
+                    [int(dataset_dict["frame_id"]) for _ in annos], dtype=torch.int64 
+                )
+                instances.inst_ids = torch.as_tensor(
+                    [int(obj["inst_id"]) for obj in annos], dtype=torch.int64
+                )
 
             # After transforms such as cropping are applied, the bounding box may no longer
             # tightly bound the object. As an example, imagine a triangle object

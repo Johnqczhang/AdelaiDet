@@ -168,7 +168,7 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
         "height", "width",
         "frame_id", "prev_image_id", "next_image_id", "video_id"
     ]
-    ann_keys = ["iscrowd", "bbox", "track_id", "area", "category_id"] + (extra_annotation_keys or [])
+    ann_keys = ["iscrowd", "bbox", "inst_id", "area", "category_id"] + (extra_annotation_keys or [])
 
     num_instances_without_valid_segmentation = 0
 

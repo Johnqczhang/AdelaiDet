@@ -91,6 +91,7 @@ class FCOSOutputs(nn.Module):
         self.moving_num_fg_momentum = 0.9
 
         self.loss_weight_cls = cfg.MODEL.FCOS.LOSS_WEIGHT_CLS
+        self.track_keys = ["video_ids", "frame_ids", "inst_ids"] if cfg.MODEL.EMBEDINST.ENABLED else []
 
     def _transpose(self, training_targets, num_loc_list):
         '''
@@ -200,7 +201,7 @@ class FCOSOutputs(nn.Module):
         labels = []
         reg_targets = []
         target_inds = []
-        track_ids = []
+        track_ids = {name: [] for name in self.track_keys}
         xs, ys = locations[:, 0], locations[:, 1]
 
         num_targets = 0
@@ -214,7 +215,8 @@ class FCOSOutputs(nn.Module):
                 labels.append(labels_per_im.new_zeros(locations.size(0)) + self.num_classes)
                 reg_targets.append(locations.new_zeros((locations.size(0), 4)))
                 target_inds.append(labels_per_im.new_zeros(locations.size(0)) - 1)
-                track_ids.append(labels_per_im.new_zeros(locations.size(0)) - 1)
+                for v in track_ids.values():
+                    v.append(labels_per_im.new_zeros(locations.size(0)) - 1)
                 continue
 
             area = targets_per_im.gt_boxes.area()
@@ -258,21 +260,21 @@ class FCOSOutputs(nn.Module):
             labels_per_im = labels_per_im[locations_to_gt_inds]
             labels_per_im[locations_to_min_area == INF] = self.num_classes
 
-            if targets_per_im.has("track_ids"):
-                track_ids_per_im = targets_per_im.track_ids[locations_to_gt_inds]
-                track_ids_per_im[locations_to_min_area == INF] = -1
-                track_ids.append(track_ids_per_im)
+            if len(self.track_keys) > 0:
+                for k, v in track_ids.items():
+                    ids_per_im = targets_per_im.get(k)[locations_to_gt_inds]
+                    ids_per_im[locations_to_min_area == INF] = -1
+                    v.append(ids_per_im)
 
             labels.append(labels_per_im)
             reg_targets.append(reg_targets_per_im)
             target_inds.append(target_inds_per_im)
 
-        return {
-            "labels": labels,
-            "reg_targets": reg_targets,
-            "target_inds": target_inds,
-            "track_ids": track_ids
-        }
+        training_targets = dict(labels=labels, reg_targets=reg_targets, target_inds=target_inds)
+        if len(self.track_keys) > 0:
+            training_targets.update(track_ids)
+
+        return training_targets
 
     def losses(self, logits_pred, reg_pred, ctrness_pred, locations, gt_instances, top_feats=None):
         """
@@ -329,6 +331,10 @@ class FCOSOutputs(nn.Module):
                 # Reshape: (N, -1, Hi, Wi) -> (N*Hi*Wi, -1)
                 x.permute(0, 2, 3, 1).reshape(-1, x.size(1)) for x in top_feats
             ], dim=0,)
+        if len(self.track_keys) > 0:
+            # Reshape: (N, 1, Hi, Wi) -> (N*Hi*Wi,)
+            for name in self.track_keys:
+                instances.set(name, cat(training_targets[name], dim=0))
 
         return self.fcos_losses(instances)
 
