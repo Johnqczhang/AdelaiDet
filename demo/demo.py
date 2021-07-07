@@ -150,7 +150,10 @@ def infer_on_mots(args, demo):
         args.imgs = [osp.join(img_dir, f) for f in os.listdir(img_dir) if f.endswith(".jpg")]
         args.imgs = sorted(args.imgs)
         args.fps = mots_fps[seq_name]
-        args.mots_txt = osp.join(out_dir, f"00{seq_name[-2:]}.txt")
+        if seq_name[-2:] in ["01", "06", "07", "12"]:
+            args.mots_txt = osp.join(out_dir, f"{seq_name}.txt")
+        else:
+            args.mots_txt = osp.join(out_dir, f"00{seq_name[-2:]}.txt")
         args.output = osp.join(out_dir, seq_name)
         print(f"Inferring on {seq_name} ...")
         infer_time = infer_with_tracking(args, demo, tracker)
