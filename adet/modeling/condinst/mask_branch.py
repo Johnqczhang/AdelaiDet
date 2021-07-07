@@ -45,9 +45,10 @@ class MaskBranch(nn.Module):
             tower.append(conv_block(
                 channels, channels, 3, 1
             ))
-        tower.append(nn.Conv2d(
-            channels, max(self.num_outputs, 1), 1
-        ))
+        last_conv = nn.Conv2d(channels, max(self.num_outputs, 1), 1)
+        nn.init.kaiming_uniform_(last_conv.weight, a=1)
+        nn.init.constant_(last_conv.bias, 0)
+        tower.append(last_conv)
         self.add_module('tower', nn.Sequential(*tower))
 
         if self.sem_loss_on:
@@ -90,7 +91,7 @@ class MaskBranch(nn.Module):
 
         losses = {}
         # auxiliary thing semantic loss
-        if self.training and self.sem_loss_on:
+        if self.training and self.sem_loss_on and gt_instances is not None:
             logits_pred = self.logits(self.seg_head(
                 features[self.in_features[0]]
             ))

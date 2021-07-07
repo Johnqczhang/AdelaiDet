@@ -70,6 +70,7 @@ _C.MODEL.FCOS.CENTER_SAMPLE = True
 _C.MODEL.FCOS.POS_RADIUS = 1.5
 _C.MODEL.FCOS.LOC_LOSS_TYPE = 'giou'
 _C.MODEL.FCOS.YIELD_PROPOSAL = False
+_C.MODEL.FCOS.YIELD_BOX_FEATURES = False
 
 # ---------------------------------------------------------------------------- #
 # VoVNet backbone
@@ -247,6 +248,41 @@ _C.MODEL.CONDINST.MASK_BRANCH.NORM = "BN"
 _C.MODEL.CONDINST.MASK_BRANCH.NUM_CONVS = 4
 _C.MODEL.CONDINST.MASK_BRANCH.SEMANTIC_LOSS_ON = False
 
+
+# The options for EmbedInst, which can generate proposal embeddings and pixel embeddings with CondInst model.
+# The learning of both embeddings is based on EmbedMask for one-stage instance segmentation,
+# please refer to the paper https://arxiv.org/abs/1912.01954
+_C.MODEL.EMBEDINST = CN({"ENABLED": False})
+_C.MODEL.EMBEDINST.EMBED_DIM = 16
+# If True, only finetune on newly added modules
+_C.MODEL.EMBEDINST.FREEZE_TRAIN = False
+
+### Proposal embeddings & learnable margins ###
+# -1: no proposal head
+# 0: no 1x1 conv before the predictions of proposal embeddings and margins
+# n (n > 0): add an extra 1x1 conv layer with n channels before the predictions
+_C.MODEL.EMBEDINST.PROPOSAL_HEAD_CHANNELS = 0
+_C.MODEL.EMBEDINST.PRIOR_MARGIN = 2.0
+_C.MODEL.EMBEDINST.MARGIN_REDUCE_FACTOR = 32.0
+# TODO: training samples sampling strategy
+# _C.MODEL.EMBEDINST.SAMPLE_IN_MASK = False
+# If True, add a smooth loss that reduces the variance of embeddings for each gt instance
+_C.MODEL.EMBEDINST.LOSS_SMOOTH_ON = False
+_C.MODEL.EMBEDINST.LOSS_WEIGHT_SMOOTH = 0.1
+# TODO: If True, the loss on negative samples which sampled from different videos is also considered (default)
+# _C.MODEL.EMBEDINST.LOSS_INTRA_SEQ_ON = True
+
+### Pixel embeddings ###
+# If True, the model will predict pixel embeddings based on P3 features
+_C.MODEL.EMBEDINST.PIXEL_BRANCH = CN({"ENABLED": False})
+# If True, use mask features output by condinst's mask branch
+_C.MODEL.EMBEDINST.PIXEL_BRANCH.SHARED = False
+_C.MODEL.EMBEDINST.PIXEL_BRANCH.OUT_CHANNELS = 128
+# "l2": euclidean distance | "cos": cosine distance
+_C.MODEL.EMBEDINST.PIXEL_BRANCH.DIST_TYPE = "l2"
+_C.MODEL.EMBEDINST.PIXEL_BRANCH.FIXED_MARGINS = [0.5, 1.5, 0.0]
+
+
 # The options for BoxInst, which can train the instance segmentation model with box annotations only
 # Please refer to the paper https://arxiv.org/abs/2012.02310
 _C.MODEL.BOXINST = CN()
@@ -260,28 +296,6 @@ _C.MODEL.BOXINST.PAIRWISE.DILATION = 2
 _C.MODEL.BOXINST.PAIRWISE.WARMUP_ITERS = 10000
 _C.MODEL.BOXINST.PAIRWISE.COLOR_THRESH = 0.3
 
-# ---------------------------------------------------------------------------- #
-# EmbedMask Options
-# ---------------------------------------------------------------------------- #
-# Please refer to the paper https://arxiv.org/abs/1912.01954
-_C.MODEL.PIXEL_HEAD = CN()
-
-# Whether to enable PixelHead
-_C.MODEL.PIXEL_HEAD.ENABLED = False
-_C.MODEL.PIXEL_HEAD.IN_FEATURES = ["p3",]
-_C.MODEL.PIXEL_HEAD.FPN_STRIDES = [8,]
-_C.MODEL.PIXEL_HEAD.NUM_CONVS = 4
-_C.MODEL.PIXEL_HEAD.EMBED_DIM = 16
-_C.MODEL.PIXEL_HEAD.EMBED_REDUCE_FACTOR = 1
-_C.MODEL.PIXEL_HEAD.BOX_EXPAND = 1.2
-_C.MODEL.PIXEL_HEAD.SAMPLE_CTR_ON = "box"  # "box" | "mask"
-# "l2": euclidean distance | "cos": cosine distance
-_C.MODEL.PIXEL_HEAD.EMBEDS_DIST_FUNC = "l2"
-# the third margin is for hard positives and hard negatives
-_C.MODEL.PIXEL_HEAD.HINGE_LOSS_MARGINS = [0.2, 1.2, 0.0]
-# if True, compute hinge loss for intra-frame instances
-_C.MODEL.PIXEL_HEAD.LOSS_INTRA_FRAME_ON = False
-_C.MODEL.PIXEL_HEAD.FREEZE_TRAIN = False
 
 # ---------------------------------------------------------------------------- #
 # TOP Module Options

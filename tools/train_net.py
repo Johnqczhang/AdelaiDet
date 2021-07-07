@@ -104,7 +104,7 @@ class Trainer(DefaultTrainer):
         DatasetMapper, which adds categorical labels as a semantic mask.
         """
         mapper = DatasetMapperWithBasis(cfg, True)
-        if cfg.MODEL.PIXEL_HEAD.ENABLED:
+        if cfg.MODEL.EMBEDINST.ENABLED:
             return build_mots_train_loader(cfg, mapper=mapper)
         else:
             return build_detection_train_loader(cfg, mapper=mapper)

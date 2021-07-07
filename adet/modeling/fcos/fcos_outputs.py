@@ -440,6 +440,9 @@ class FCOSOutputs(nn.Module):
         if len(top_feats) > 0:
             bundle["t"] = top_feats
 
+        if len(self.track_keys) > 0:
+            num_loc_list = [l.size(0) for l in locations]
+
         for i, per_bundle in enumerate(zip(*bundle.values())):
             # get per-level bundle
             per_bundle = dict(zip(bundle.keys(), per_bundle))
@@ -457,16 +460,24 @@ class FCOSOutputs(nn.Module):
                 )
             )
 
+            num_imgs = len(sampled_boxes[-1])
+            num_locs = sum(num_loc_list[0:i])
             for per_im_sampled_boxes in sampled_boxes[-1]:
                 per_im_sampled_boxes.fpn_levels = l.new_ones(
                     len(per_im_sampled_boxes), dtype=torch.long
                 ) * i
+                if len(self.track_keys) > 0:
+                    # transpose to level first
+                    per_im_sampled_boxes.pos_inds += num_locs * num_imgs
 
         boxlists = list(zip(*sampled_boxes))
         boxlists = [Instances.cat(boxlist) for boxlist in boxlists]
         boxlists = self.select_over_all_levels(boxlists)
 
-        return boxlists
+        for im_id, per_im in enumerate(boxlists):
+            per_im.im_inds = per_im.locations.new_ones(len(per_im), dtype=torch.long) * im_id
+
+        return Instances.cat(boxlists)
 
     def forward_for_single_feature_map(
             self, locations, logits_pred, reg_pred,
@@ -519,6 +530,7 @@ class FCOSOutputs(nn.Module):
                 per_box_cls, top_k_indices = \
                     per_box_cls.topk(per_pre_nms_top_n, sorted=False)
                 per_class = per_class[top_k_indices]
+                per_box_loc = per_box_loc[top_k_indices]
                 per_box_regression = per_box_regression[top_k_indices]
                 per_locations = per_locations[top_k_indices]
                 if top_feat is not None:
@@ -536,6 +548,7 @@ class FCOSOutputs(nn.Module):
             boxlist.scores = torch.sqrt(per_box_cls)
             boxlist.pred_classes = per_class
             boxlist.locations = per_locations
+            boxlist.pos_inds = per_box_loc + i * per_candidate_inds.size(0)
             if top_feat is not None:
                 boxlist.top_feat = per_top_feat
             results.append(boxlist)

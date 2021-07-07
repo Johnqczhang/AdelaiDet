@@ -74,6 +74,26 @@ class MaskTracker(BaseTracker):
         dists = dists.where(dists != -1, dists.amax(dim=0))
         return dists.numpy()
 
+    def compute_dists_by_inst_embeds(self, cur_ids, track_ids):
+        cur_embeds = self.instances.pred_embeds[cur_ids]
+        track_embeds = self.get("pred_embeds", track_ids)
+        D = cur_embeds.size(1) // 2
+        dists = (track_embeds[:, None, :D] - cur_embeds[None, :, :D]).square()
+        m1, m2 = track_embeds[:, D:], cur_embeds[:, D:]
+        vars = 4 * m1[:, None] * m2[None] / (m1[:, None] + m2[None])
+        probs = 1 - (-(dists * vars).sum(dim=-1)).exp()
+
+        if "miou" in self.track_metric:
+            miou = self.compute_dists_by_miou(cur_ids, track_ids)
+            if "+miou" in self.track_metric:
+                probs = (probs + miou) * 0.5
+            elif "*miou" in self.track_metric:
+                probs = 1 - (1 - probs) * (1 - miou)
+            else:
+                raise NotImplementedError
+
+        return probs
+
     def compute_dists_by_pixel_embeds(self, cur_ids, track_ids):
         cur_embeds = self.instances.pixel_embeds[cur_ids].embeds_list
         track_embeds = self.get("pixel_embeds", track_ids)
@@ -94,6 +114,9 @@ class MaskTracker(BaseTracker):
 
         assert self.instances.has("pred_masks")
         metrics = dict(masks=self.instances.pred_masks)
+        if "preb" in self.track_metric:  # "preb" mean proposal embeds
+            assert self.instances.has("pred_embeds")
+            metrics["pred_embeds"] = self.instances.pred_embeds
         if "pxeb" in self.track_metric:  # "pxeb" means pixel embeds
             assert self.instances.has("pixel_embeds")
             metrics["pixel_embeds"] = self.instances.pixel_embeds.embeds_list
@@ -112,6 +135,8 @@ class MaskTracker(BaseTracker):
                 cur_ids = torch.arange(num_inst)
                 if self.track_metric == "miou":
                     dists = self.compute_dists_by_miou(cur_ids, track_ids)
+                elif "preb" in self.track_metric:
+                    dists = self.compute_dists_by_inst_embeds(cur_ids, track_ids)
                 elif "pxeb" in self.track_metric:
                     dists = self.compute_dists_by_pixel_embeds(cur_ids, track_ids)  
                 row, col = linear_sum_assignment(dists)

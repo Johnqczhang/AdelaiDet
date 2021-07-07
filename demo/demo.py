@@ -109,7 +109,7 @@ def infer_with_tracking(args, demo, tracker):
 
 
 def infer_on_mots(args, demo):
-    mots_path = osp.join(osp.dirname(__file__), "../datasets/mots/MOTS")
+    mots_path = osp.join(osp.dirname(__file__), "../datasets/mots")
     mots_seqs = [
         osp.join(mots_path, "train", seq) for seq in os.listdir(osp.join(mots_path, "train"))
         if seq.startswith("MOTS")

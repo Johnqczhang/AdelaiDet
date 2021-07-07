@@ -49,18 +49,12 @@ class FCOS(nn.Module):
         self.in_features = cfg.MODEL.FCOS.IN_FEATURES
         self.fpn_strides = cfg.MODEL.FCOS.FPN_STRIDES
         self.yield_proposal = cfg.MODEL.FCOS.YIELD_PROPOSAL
+        self.yield_box_feats = cfg.MODEL.FCOS.YIELD_BOX_FEATURES
 
         self.fcos_head = FCOSHead(cfg, [input_shape[f] for f in self.in_features])
         self.in_channels_to_top_module = self.fcos_head.in_channels_to_top_module
 
         self.fcos_outputs = FCOSOutputs(cfg)
-
-        if cfg.MODEL.PIXEL_HEAD.ENABLED:
-            from .pixel_head import build_pixel_head
-            self.pixel_head = build_pixel_head(cfg, input_shape)
-
-    def has_pixel_head(self):
-        return hasattr(self, "pixel_head")
 
     def forward_head(self, features, top_module=None):
         features = [features[f] for f in self.in_features]
@@ -84,11 +78,8 @@ class FCOS(nn.Module):
         features = [features[f] for f in self.in_features]
         locations = self.compute_locations(features)
         logits_pred, reg_pred, ctrness_pred, top_feats, bbox_towers = self.fcos_head(
-            features, top_module, self.yield_proposal
+            features, top_module, self.yield_proposal or self.yield_box_feats
         )
-
-        if self.has_pixel_head():
-            self.pixel_head(features, locations)
 
         if self.training:
             results, losses = self.fcos_outputs.losses(
@@ -102,23 +93,20 @@ class FCOS(nn.Module):
                         logits_pred, reg_pred, ctrness_pred,
                         locations, images.image_sizes, top_feats
                     )
-
-            if self.has_pixel_head():
-                num_loc = len(locations[0])
-                loc_to_size_range = locations[0].new_tensor([-1, INF])[None].expand(num_loc, -1)
-                training_targets = self.fcos_outputs.compute_targets_for_locations(
-                    locations[0], gt_instances, loc_to_size_range, [num_loc]
-                )
-                losses.update(self.pixel_head.losses(training_targets))
-
-            return results, losses
         else:
-            results = self.fcos_outputs.predict_proposals(
+            results, losses = {}, {}
+            results["instances"] = self.fcos_outputs.predict_proposals(
                 logits_pred, reg_pred, ctrness_pred,
                 locations, images.image_sizes, top_feats
             )
 
-            return results, {}
+        if self.yield_box_feats:
+            results["locations"] = locations
+            results["box_feats"] = {
+                f: b for f, b in zip(self.in_features, bbox_towers)
+            }
+
+        return results, losses
 
     def compute_locations(self, features):
         locations = []
