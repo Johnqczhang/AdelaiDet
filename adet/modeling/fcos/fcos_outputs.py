@@ -460,8 +460,9 @@ class FCOSOutputs(nn.Module):
                 )
             )
 
-            num_imgs = len(sampled_boxes[-1])
-            num_locs = sum(num_loc_list[0:i])
+            if len(self.track_keys) > 0:
+                num_imgs = len(sampled_boxes[-1])
+                num_locs = sum(num_loc_list[0:i])
             for per_im_sampled_boxes in sampled_boxes[-1]:
                 per_im_sampled_boxes.fpn_levels = l.new_ones(
                     len(per_im_sampled_boxes), dtype=torch.long
