@@ -137,12 +137,12 @@ class ProposalEmbedder(nn.Module):
         # self.loss_intra_seq_on = cfg.MODEL.EMBEDINST.LOSS_INTRA_SEQ_ON
 
     def forward(self, proposals):
-        box_feats = proposals["box_feats"]
+        tower_feats = proposals["tower_feats"]
         locations = proposals["locations"]
         pred_embeds = []
         for i, f in enumerate(self.in_features):
-            embed_x = box_feats[f]
-            margin_x = box_feats[f] / self.margin_reduce_factor
+            embed_x = tower_feats[f]
+            margin_x = tower_feats[f] / self.margin_reduce_factor
             if hasattr(self, "embed_conv"):
                 embed_x = self.embed_conv(embed_x)
                 margin_x = self.margin_conv(margin_x)

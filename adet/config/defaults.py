@@ -70,7 +70,11 @@ _C.MODEL.FCOS.CENTER_SAMPLE = True
 _C.MODEL.FCOS.POS_RADIUS = 1.5
 _C.MODEL.FCOS.LOC_LOSS_TYPE = 'giou'
 _C.MODEL.FCOS.YIELD_PROPOSAL = False
-_C.MODEL.FCOS.YIELD_BOX_FEATURES = False
+# "": return no features (by default)
+# "cls": return features from cls_tower
+# "box": return features from box_tower
+# "share": return features from share_tower
+_C.MODEL.FCOS.YIELD_FEATURES = ""
 
 # ---------------------------------------------------------------------------- #
 # VoVNet backbone
