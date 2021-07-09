@@ -108,28 +108,33 @@ class ProposalEmbedder(nn.Module):
         self.embed_dim = cfg.MODEL.EMBEDINST.EMBED_DIM
         in_channels = [v.channels for v in input_shape.values()][0]
         channels = cfg.MODEL.EMBEDINST.PROPOSAL_HEAD_CHANNELS
+        self.use_margin = cfg.MODEL.EMBEDINST.USE_MARGIN
         if channels > 0:
             self.embed_conv = nn.Conv2d(
                 in_channels, channels, kernel_size=1
             )
-            self.margin_conv = nn.Conv2d(
-                in_channels, channels, kernel_size=1
-            )
-            for m in [self.embed_conv, self.margin_conv]:
+            convs = [self.embed_conv]
+            if self.use_margin:
+                self.margin_conv = nn.Conv2d(
+                    in_channels, channels, kernel_size=1
+                )
+                convs.append(self.margin_conv)
+            for m in convs:
                 nn.init.normal_(m.weight, std=0.01)
                 nn.init.constant_(m.bias, 0)
             in_channels = channels
         self.proposal_embedder = Embedder(in_channels, self.embed_dim)
 
         # learnable margin
-        prior_margin = cfg.MODEL.EMBEDINST.PRIOR_MARGIN
-        init_margin_bias = math.log(math.log(2) / (prior_margin ** 2))
-        self.margin_embedder = Embedder(in_channels, self.embed_dim)
-        for l in self.margin_embedder.modules():
-            if isinstance(l, nn.Conv2d):
-                nn.init.constant_(l.bias, init_margin_bias)
-        self.margin_scales = nn.ModuleList([Scale(init_value=1.0) for _ in range(len(input_shape))])
-        self.margin_reduce_factor = cfg.MODEL.EMBEDINST.MARGIN_REDUCE_FACTOR
+        if self.use_margin:
+            prior_margin = cfg.MODEL.EMBEDINST.PRIOR_MARGIN
+            init_margin_bias = math.log(math.log(2) / (prior_margin ** 2))
+            self.margin_embedder = Embedder(in_channels, self.embed_dim)
+            for l in self.margin_embedder.modules():
+                if isinstance(l, nn.Conv2d):
+                    nn.init.constant_(l.bias, init_margin_bias)
+            self.margin_scales = nn.ModuleList([Scale(init_value=1.0) for _ in range(len(input_shape))])
+            self.margin_reduce_factor = cfg.MODEL.EMBEDINST.MARGIN_REDUCE_FACTOR
 
         # hyper-params
         self.loss_smooth_on = cfg.MODEL.EMBEDINST.LOSS_SMOOTH_ON
@@ -142,16 +147,20 @@ class ProposalEmbedder(nn.Module):
         pred_embeds = []
         for i, f in enumerate(self.in_features):
             embed_x = tower_feats[f]
-            margin_x = tower_feats[f] / self.margin_reduce_factor
             if hasattr(self, "embed_conv"):
                 embed_x = self.embed_conv(embed_x)
-                margin_x = self.margin_conv(margin_x)
-
-            margins = self.margin_embedder(margin_x, scales=self.margin_scales[i])
-            # Here, the network predicts 1/(2 x sigma^2) directly
-            margins = margins.exp()
             embeds = self.proposal_embedder(embed_x, locations=locations[i])
-            pred_embeds.append(torch.cat([embeds, margins], dim=1))
+
+            if self.use_margin:
+                margin_x = tower_feats[f] / self.margin_reduce_factor
+                if hasattr(self, "margin_conv"):
+                    margin_x = self.margin_conv(margin_x)
+                margins = self.margin_embedder(margin_x, scales=self.margin_scales[i])
+                # Here, the network predicts 1/(2 x sigma^2) directly
+                margins = margins.exp()
+                embeds = torch.cat([embeds, margins], dim=1)
+
+            pred_embeds.append(embeds)
 
         pred_embeds = torch.cat([
             # reshape: (N, embed_dim, Hi, Wi) -> (N*Hi*Wi, embed_dim), level first
@@ -182,9 +191,15 @@ class ProposalEmbedder(nn.Module):
 
         return loss
 
-    def compute_dist_probs(self, p1, p2, m1, m2):
-        dists = F.mse_loss(p1, p2, reduction="none")
-        vars = 4 * m1 * m2 / (m1 + m2)
+    def compute_dist_probs(self, emb1, emb2):
+        if self.use_margin:
+            emb1, emb2 = emb1[:, :self.embed_dim], emb2[:, :self.embed_dim]
+            var1, var2 = emb1[:, self.embed_dim:], emb2[:, self.embed_dim:]
+            vars = 4 * var1 * var2 / (var1 + var2)
+        else:
+            vars = 0.5
+
+        dists = F.mse_loss(emb1, emb2, reduction="none")        
         probs = (-(dists * vars).sum(dim=-1)).exp()
         return probs
 
@@ -198,10 +213,7 @@ class ProposalEmbedder(nn.Module):
         )
         # compute distance and map it to the probability, shape: (N,)
         probs = self.compute_dist_probs(
-            pred_embeds[inds[:, 0], :self.embed_dim],
-            pred_embeds[inds[:, 1], :self.embed_dim],
-            pred_embeds[inds[:, 0], self.embed_dim:],
-            pred_embeds[inds[:, 1], self.embed_dim:]
+            pred_embeds[inds[:, 0]], pred_embeds[inds[:, 1]]
         )
         # find indices of positive and negative samples
         pos = inst_ids[inds[:, 0]] == inst_ids[inds[:, 1]]

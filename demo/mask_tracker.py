@@ -77,10 +77,15 @@ class MaskTracker(BaseTracker):
     def compute_dists_by_inst_embeds(self, cur_ids, track_ids):
         cur_embeds = self.instances.pred_embeds[cur_ids]
         track_embeds = self.get("pred_embeds", track_ids)
-        D = cur_embeds.size(1) // 2
-        dists = (track_embeds[:, None, :D] - cur_embeds[None, :, :D]).square()
-        m1, m2 = track_embeds[:, D:], cur_embeds[:, D:]
-        vars = 4 * m1[:, None] * m2[None] / (m1[:, None] + m2[None])
+        emb1, emb2 = track_embeds, cur_embeds
+        if "preb-mar" in self.track_metric:
+            emb1, var1 = emb1.split(2, dim=1)
+            emb2, var2 = emb2.split(2, dim=1)
+            vars = 4 * var1[:, None] * var2[None] / (var1[:, None] + var2[None])
+        else:
+            vars = 0.5
+
+        dists = (emb1[:, None] - emb2[None]).square()
         probs = 1 - (-(dists * vars).sum(dim=-1)).exp()
 
         if "miou" in self.track_metric:

@@ -266,6 +266,7 @@ _C.MODEL.EMBEDINST.FREEZE_TRAIN = False
 # 0: no 1x1 conv before the predictions of proposal embeddings and margins
 # n (n > 0): add an extra 1x1 conv layer with n channels before the predictions
 _C.MODEL.EMBEDINST.PROPOSAL_HEAD_CHANNELS = 0
+_C.MODEL.EMBEDINST.USE_MARGIN = True
 _C.MODEL.EMBEDINST.PRIOR_MARGIN = 2.0
 _C.MODEL.EMBEDINST.MARGIN_REDUCE_FACTOR = 32.0
 # TODO: training samples sampling strategy
