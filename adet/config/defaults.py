@@ -271,9 +271,17 @@ _C.MODEL.EMBEDINST.PRIOR_MARGIN = 2.0
 _C.MODEL.EMBEDINST.MARGIN_REDUCE_FACTOR = 32.0
 # TODO: training samples sampling strategy
 # _C.MODEL.EMBEDINST.SAMPLE_IN_MASK = False
+_C.MODEL.EMBEDINST.LOSS_WEIGHT_HINGE = 1.0
 # If True, add a smooth loss that reduces the variance of embeddings for each gt instance
 _C.MODEL.EMBEDINST.LOSS_SMOOTH_ON = False
 _C.MODEL.EMBEDINST.LOSS_WEIGHT_SMOOTH = 0.1
+# If True, add a cross-entropy loss for re-ID classification
+_C.MODEL.EMBEDINST.LOSS_REID_ON = False
+# "focal": FocalLoss, "ce": CrossEntropyLoss
+_C.MODEL.EMBEDINST.LOSS_REID_TYPE = "focal"
+_C.MODEL.EMBEDINST.LOSS_WEIGHT_REID = 0.1
+# Note that the number of instance ids is different when using different one-leave-out settings
+_C.MODEL.EMBEDINST.NUM_INST_IDS = 202
 # TODO: If True, the loss on negative samples which sampled from different videos is also considered (default)
 # _C.MODEL.EMBEDINST.LOSS_INTRA_SEQ_ON = True
 

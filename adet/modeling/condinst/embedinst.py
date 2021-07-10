@@ -8,6 +8,7 @@ from torch import nn
 from typing import Dict
 from detectron2.layers import ShapeSpec
 from adet.modeling.fcos.fcos import Scale
+from fvcore.nn import sigmoid_focal_loss_jit
 
 from .mask_branch import build_mask_branch
 
@@ -136,15 +137,42 @@ class ProposalEmbedder(nn.Module):
             self.margin_scales = nn.ModuleList([Scale(init_value=1.0) for _ in range(len(input_shape))])
             self.margin_reduce_factor = cfg.MODEL.EMBEDINST.MARGIN_REDUCE_FACTOR
 
+        # re-ID branch
+        self.loss_reid_on = cfg.MODEL.EMBEDINST.LOSS_REID_ON
+        if self.loss_reid_on:
+            num_iids = cfg.MODEL.EMBEDINST.NUM_INST_IDS
+            in_channels = self.embed_dim * 2 if self.use_margin else self.embed_dim
+            # cls_logits = nn.Conv2d(
+            #     in_channels, num_iids, kernel_size=1
+            # )
+            cls_logits = nn.Linear(in_channels, num_iids)
+            nn.init.normal_(cls_logits.weight, std=0.01)
+            bias_value = 0
+            self.loss_reid_type = cfg.MODEL.EMBEDINST.LOSS_REID_TYPE
+            if self.loss_reid_type == "focal":
+                # initialize the bias for focal loss
+                prior_prob = 0.01
+                bias_value = -math.log((1 - prior_prob) / prior_prob)
+            nn.init.constant_(cls_logits.bias, bias_value)
+            self.cls_logits = cls_logits
+            self.reid_scale = math.sqrt(2) * math.log(num_iids)
+
         # hyper-params
+        self.loss_w = {
+            "hinge": cfg.MODEL.EMBEDINST.LOSS_WEIGHT_HINGE
+        }
         self.loss_smooth_on = cfg.MODEL.EMBEDINST.LOSS_SMOOTH_ON
-        self.loss_w_smooth = cfg.MODEL.EMBEDINST.LOSS_WEIGHT_SMOOTH
+        if self.loss_smooth_on:
+            self.loss_w["smooth"] = cfg.MODEL.EMBEDINST.LOSS_WEIGHT_SMOOTH
+        if self.loss_reid_on:
+            self.loss_w["reid"] = cfg.MODEL.EMBEDINST.LOSS_WEIGHT_REID
         # self.loss_intra_seq_on = cfg.MODEL.EMBEDINST.LOSS_INTRA_SEQ_ON
 
     def forward(self, proposals):
         tower_feats = proposals["tower_feats"]
         locations = proposals["locations"]
         pred_embeds = []
+        # inst_logits = []
         for i, f in enumerate(self.in_features):
             embed_x = tower_feats[f]
             if hasattr(self, "embed_conv"):
@@ -161,6 +189,8 @@ class ProposalEmbedder(nn.Module):
                 embeds = torch.cat([embeds, margins], dim=1)
 
             pred_embeds.append(embeds)
+            # if self.loss_reid_on:
+            #     inst_logits.append(self.cls_logits(embeds))
 
         pred_embeds = torch.cat([
             # reshape: (N, embed_dim, Hi, Wi) -> (N*Hi*Wi, embed_dim), level first
@@ -168,6 +198,13 @@ class ProposalEmbedder(nn.Module):
         ], dim=0)
         pos_inds = proposals["instances"].pos_inds
         proposals["instances"].pred_embeds = pred_embeds[pos_inds]
+
+        if self.loss_reid_on:
+            # proposals["instances"].inst_logits = torch.cat([
+            #     x.permute(0, 2, 3, 1).reshape(-1, x.size(1)) for x in inst_logits
+            # ], dim=0)[pos_inds]
+            reid_feats = self.reid_scale * F.normalize(pred_embeds[pos_inds])
+            proposals["instances"].inst_logits = self.cls_logits(reid_feats)
 
         return proposals
 
@@ -179,15 +216,19 @@ class ProposalEmbedder(nn.Module):
     def losses(self, pred_instances):
         loss = {}
         if len(pred_instances) == 0:
-            dummy_loss = self.proposal_feats.sum() * 0
+            dummy_loss = pred_instances.pred_embeds.sum() * 0
             loss["loss_prop_hinge"] = dummy_loss
             if self.loss_smooth_on:
                 loss["loss_prop_smooth"] = dummy_loss
+            if self.loss_reid_on:
+                loss["loss_prop_reid"] = dummy_loss
             return loss
 
-        loss["loss_prop_hinge"] = self.hinge_loss(pred_instances)
+        loss["loss_prop_hinge"] = self.hinge_loss(pred_instances) * self.loss_w["hinge"]
         if self.loss_smooth_on:
-            loss["loss_prop_smooth"] = self.smooth_loss(pred_instances)
+            loss["loss_prop_smooth"] = self.smooth_loss(pred_instances) * self.loss_w["smooth"]
+        if self.loss_reid_on:
+            loss["loss_prop_reid"] = self.reid_loss(pred_instances) * self.loss_w["reid"]
 
         return loss
 
@@ -244,7 +285,23 @@ class ProposalEmbedder(nn.Module):
         mean_embeds = mean_embeds.sum(dim=0) / num_iids[:, None]
         loss = (pred_embeds[:, None] - mean_embeds[None]).square().sum(dim=-1) * one_hot
         loss = (loss.sum(dim=0) / num_iids).mean()
-        return loss * self.loss_w_smooth
+        return loss
+
+    def reid_loss(self, pred_instances):
+        # convert to 0-based id
+        inst_ids = pred_instances.inst_ids - 1
+        if self.loss_reid_type == "focal":
+            target = torch.zeros_like(pred_instances.inst_logits)
+            target = target.scatter(1, inst_ids[:, None], 1)
+            id_loss = sigmoid_focal_loss_jit(
+                pred_instances.inst_logits, target,
+                alpha=0.25, gamma=2.0, reduction="sum"
+            ) / inst_ids.size(0)
+        else:
+            id_loss = F.cross_entropy(
+                pred_instances.inst_logits, inst_ids,
+            )
+        return id_loss
 
 
 def compute_distances(func, a, b, reduction="none"):
