@@ -5,10 +5,10 @@ import torch.nn.functional as F
 
 from detectron2.layers import cat
 from detectron2.structures import Instances, Boxes
-from detectron2.utils.comm import get_world_size
+# from detectron2.utils.comm import get_world_size
 from fvcore.nn import sigmoid_focal_loss_jit
 
-from adet.utils.comm import reduce_sum, reduce_mean, compute_ious
+from adet.utils.comm import reduce_mean, compute_ious
 from adet.layers import ml_nms, IOULoss
 
 
@@ -91,7 +91,6 @@ class FCOSOutputs(nn.Module):
         self.moving_num_fg_momentum = 0.9
 
         self.loss_weight_cls = cfg.MODEL.FCOS.LOSS_WEIGHT_CLS
-        self.track_keys = ["video_ids", "frame_ids", "inst_ids"] if cfg.MODEL.EMBEDINST.ENABLED else []
 
     def _transpose(self, training_targets, num_loc_list):
         '''
@@ -173,8 +172,8 @@ class FCOSOutputs(nn.Module):
         center_y = center_y[None].expand(K, num_gts)
         center_gt = boxes.new_zeros(boxes.shape)
         # no gt
-        # if center_x.numel() == 0 or center_x[..., 0].sum() == 0:
-        #     return loc_xs.new_zeros(loc_xs.shape, dtype=torch.uint8)
+        if center_x.numel() == 0 or center_x[..., 0].sum() == 0:
+            return loc_xs.new_zeros(loc_xs.shape, dtype=torch.uint8)
         beg = 0
         for level, num_loc in enumerate(num_loc_list):
             end = beg + num_loc
@@ -201,7 +200,6 @@ class FCOSOutputs(nn.Module):
         labels = []
         reg_targets = []
         target_inds = []
-        track_ids = {name: [] for name in self.track_keys}
         xs, ys = locations[:, 0], locations[:, 1]
 
         num_targets = 0
@@ -215,8 +213,6 @@ class FCOSOutputs(nn.Module):
                 labels.append(labels_per_im.new_zeros(locations.size(0)) + self.num_classes)
                 reg_targets.append(locations.new_zeros((locations.size(0), 4)))
                 target_inds.append(labels_per_im.new_zeros(locations.size(0)) - 1)
-                for v in track_ids.values():
-                    v.append(labels_per_im.new_zeros(locations.size(0)) - 1)
                 continue
 
             area = targets_per_im.gt_boxes.area()
@@ -260,19 +256,11 @@ class FCOSOutputs(nn.Module):
             labels_per_im = labels_per_im[locations_to_gt_inds]
             labels_per_im[locations_to_min_area == INF] = self.num_classes
 
-            if len(self.track_keys) > 0:
-                for k, v in track_ids.items():
-                    ids_per_im = targets_per_im.get(k)[locations_to_gt_inds]
-                    ids_per_im[locations_to_min_area == INF] = -1
-                    v.append(ids_per_im)
-
             labels.append(labels_per_im)
             reg_targets.append(reg_targets_per_im)
             target_inds.append(target_inds_per_im)
 
         training_targets = dict(labels=labels, reg_targets=reg_targets, target_inds=target_inds)
-        if len(self.track_keys) > 0:
-            training_targets.update(track_ids)
 
         return training_targets
 
@@ -331,10 +319,6 @@ class FCOSOutputs(nn.Module):
                 # Reshape: (N, -1, Hi, Wi) -> (N*Hi*Wi, -1)
                 x.permute(0, 2, 3, 1).reshape(-1, x.size(1)) for x in top_feats
             ], dim=0,)
-        if len(self.track_keys) > 0:
-            # Reshape: (N, 1, Hi, Wi) -> (N*Hi*Wi,)
-            for name in self.track_keys:
-                instances.set(name, cat(training_targets[name], dim=0))
 
         return self.fcos_losses(instances)
 
@@ -440,9 +424,6 @@ class FCOSOutputs(nn.Module):
         if len(top_feats) > 0:
             bundle["t"] = top_feats
 
-        if len(self.track_keys) > 0:
-            num_loc_list = [l.size(0) for l in locations]
-
         for i, per_bundle in enumerate(zip(*bundle.values())):
             # get per-level bundle
             per_bundle = dict(zip(bundle.keys(), per_bundle))
@@ -460,16 +441,10 @@ class FCOSOutputs(nn.Module):
                 )
             )
 
-            if len(self.track_keys) > 0:
-                num_imgs = len(sampled_boxes[-1])
-                num_locs = sum(num_loc_list[0:i])
             for per_im_sampled_boxes in sampled_boxes[-1]:
                 per_im_sampled_boxes.fpn_levels = l.new_ones(
                     len(per_im_sampled_boxes), dtype=torch.long
                 ) * i
-                if len(self.track_keys) > 0:
-                    # transpose to level first
-                    per_im_sampled_boxes.pos_inds += num_locs * num_imgs
 
         boxlists = list(zip(*sampled_boxes))
         boxlists = [Instances.cat(boxlist) for boxlist in boxlists]
@@ -531,7 +506,6 @@ class FCOSOutputs(nn.Module):
                 per_box_cls, top_k_indices = \
                     per_box_cls.topk(per_pre_nms_top_n, sorted=False)
                 per_class = per_class[top_k_indices]
-                per_box_loc = per_box_loc[top_k_indices]
                 per_box_regression = per_box_regression[top_k_indices]
                 per_locations = per_locations[top_k_indices]
                 if top_feat is not None:
@@ -549,7 +523,6 @@ class FCOSOutputs(nn.Module):
             boxlist.scores = torch.sqrt(per_box_cls)
             boxlist.pred_classes = per_class
             boxlist.locations = per_locations
-            boxlist.pos_inds = per_box_loc + i * per_candidate_inds.size(0)
             if top_feat is not None:
                 boxlist.top_feat = per_top_feat
             results.append(boxlist)

@@ -237,18 +237,17 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
 class PairwiseMapDataset(MapDataset):
     def __init__(self, dataset, map_func):
         super().__init__(dataset, map_func)
-        T = map_func.sample_nearby_frames
-        self.nearby_frames_set = set(i for i in range(-T, T + 1) if i != 0)
+        self.T = map_func.sample_nearby_frames
 
     def __getitem__(self, idx):
         cur_idx = int(idx)
         data = self._dataset[cur_idx]
 
         # randomly sample a frame out of nearby T frames
-        offset = self._rng.sample(self.nearby_frames_set, k=1)[0]
-        next_frame_id = data["frame_id"] + offset
-        if next_frame_id < 1 or next_frame_id > data["num_frames"]:
-            offset = -offset
+        start = max(-self.T, 1 - data["frame_id"])
+        end = min(self.T, data["num_frames"] - data["frame_id"]) + 1
+        nearby_frames_offset = [i for i in range(start, end) if i != 0]
+        offset = self._rng.sample(nearby_frames_offset, k=1)[0]
         next_idx = cur_idx + offset
         next_data = self._dataset[next_idx]
         assert next_data["video_id"] == data["video_id"], \

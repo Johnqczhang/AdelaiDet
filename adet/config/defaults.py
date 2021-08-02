@@ -257,6 +257,19 @@ _C.MODEL.PX_VOLUME = CN({"ENABLED": False})
 # 1: adjacent frames
 # >1: frames around the current frame 
 _C.MODEL.PX_VOLUME.SAMPLE_NEARBY_FRAMES = 1
+# pooling method: extract a feature vector for an intance on the mask feature map
+# using the gt (for training) or predicted (for inference) mask.
+# - "avg": average pooling over all foregound pixel features (e.g., MOTSNet)
+# - "max": max pooling over all foreground pixel features
+_C.MODEL.PX_VOLUME.MASK_POOLER_TYPE = "avg"
+_C.MODEL.PX_VOLUME.LOSS_NCE_TEMP = 0.07
+_C.MODEL.PX_VOLUME.LOSS_WEIGHT = 0.5
+# If True, compute segmentation loss on masks of p3 level
+_C.MODEL.PX_VOLUME.LOSS_P3_MASK_ON = False
+# If True, enable vectorized operations
+_C.MODEL.PX_VOLUME.VEC_OP_ON = False
+# If True, normalize pixel-wise features before computing correlations
+_C.MODEL.PX_VOLUME.NORM_FEATS_ON = True
 
 
 # The options for BoxInst, which can train the instance segmentation model with box annotations only

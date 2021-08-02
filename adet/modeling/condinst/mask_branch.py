@@ -86,9 +86,6 @@ class MaskBranch(nn.Module):
 
         mask_feats = self.tower(x)
 
-        if self.num_outputs == 0:
-            mask_feats = mask_feats[:, :self.num_outputs]
-
         losses = {}
         # auxiliary thing semantic loss
         if self.training and self.sem_loss_on and gt_instances is not None:

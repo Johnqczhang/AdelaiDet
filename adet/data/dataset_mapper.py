@@ -4,8 +4,14 @@ import os.path as osp
 
 import numpy as np
 import torch
+# # USER: Debug for visualization
+# import matplotlib as mpl
+# import matplotlib.colors as mplc
+# import matplotlib.pyplot as plt
+# from detectron2.utils.colormap import random_color
+
 # from fvcore.common.file_io import PathManager
-from PIL import Image
+# from PIL import Image
 from pycocotools import mask as maskUtils
 
 from detectron2.data import detection_utils as utils
@@ -114,6 +120,29 @@ class DatasetMapperWithBasis(DatasetMapper):
             else:
                 raise e
 
+        # # USER: Debug for visualization
+        # dpi = 200
+        # image_shape = image.shape[:2]  # h, w
+        # img_name = dataset_dict["file_name"].split('/')
+        # num_insts = len([o for o in dataset_dict["annotations"] if o["iscrowd"] == 0])
+        # colors = [random_color(rgb=True, maximum=1) for _ in range(num_insts)]
+
+        # fig = plt.figure(figsize=[image_shape[1] / dpi, image_shape[0] / dpi], frameon=False)
+        # ax = plt.Axes(fig, [0.,0.,1.,1.]);  ax.axis("off");  fig.add_axes(ax)
+        # ax.imshow(image[..., ::-1]) 
+        # boxes = [o["bbox"] for o in dataset_dict["annotations"] if o["iscrowd"] == 0]  # xywh
+        # masks = [segmToMask(o["segmentation"], image_shape) for o in dataset_dict["annotations"] if o["iscrowd"] == 0]
+        # for j, box in enumerate(boxes):
+        #     x0, y0, w, h = box
+        #     ax.add_patch(
+        #         mpl.patches.Rectangle((x0, y0), w, h, fill=False, edgecolor=colors[j], linewidth=1, alpha=0.5, linestyle="-")
+        #     )
+        #     rgba = np.zeros(image_shape + (4,), dtype=np.float32)
+        #     rgba[..., :3] = mplc.to_rgb(colors[j])
+        #     rgba[..., 3] = (masks[j] == 1).astype(np.float32) * 0.5
+        #     ax.imshow(rgba)
+        # plt.savefig(f"./temp/{img_name[-3]}_{img_name[-1].split('.')[0]}_0.jpg")
+
         # USER: Remove if you don't do semantic/panoptic segmentation.
         if "sem_seg_file_name" in dataset_dict:
             sem_seg_gt = utils.read_image(
@@ -192,6 +221,24 @@ class DatasetMapperWithBasis(DatasetMapper):
                 instances.gt_boxes = instances.gt_masks.get_bounding_boxes()
             dataset_dict["instances"] = utils.filter_empty_instances(instances)
 
+        # # USER: Debug for visualization
+        # fig = plt.figure(figsize=[image_shape[1] / dpi, image_shape[0] / dpi], frameon=False)
+        # ax = plt.Axes(fig, [0.,0.,1.,1.]);  ax.axis("off");  fig.add_axes(ax)
+        # ax.imshow(image[..., ::-1]) 
+        # boxes = instances.gt_boxes.tensor.numpy()
+        # masks = instances.gt_masks.tensor.numpy().astype(np.uint8)
+        # for j, box in enumerate(boxes):
+        #     x0, y0, x1, y1 = box
+        #     ax.add_patch(
+        #         mpl.patches.Rectangle((x0, y0), x1 - x0, y1 - y0, fill=False, edgecolor=colors[j], linewidth=1, alpha=0.5, linestyle="-")
+        #     )
+        #     rgba = np.zeros(image_shape + (4,), dtype=np.float32)
+        #     rgba[..., :3] = mplc.to_rgb(colors[j])
+        #     rgba[..., 3] = (masks[j] == 1).astype(np.float32) * 0.5
+        #     ax.imshow(rgba)
+        # plt.savefig(f"./temp/{img_name[-3]}_{img_name[-1].split('.')[0]}_1.jpg")
+        # plt.close("all")
+
         if self.basis_loss_on and self.is_train:
             # load basis supervisions
             if self.ann_set == "coco":
@@ -244,37 +291,48 @@ class PairDatasetMapper(DatasetMapperWithBasis):
                 else:
                     raise e
 
-        if "sem_seg_file_name" in data_dicts[0]:
-            sem_seg_gts = [
-                utils.read_image(d.pop("sem_seg_file_name"), "L").squeeze(2)
-                for d in data_dicts
-            ]
-        else:
-            sem_seg_gts = [None for _ in data_dicts]
+        # # USER: Debug for visualization
+        # dpi = 200
+        # image_shape = images[0].shape[:2]  # h, w
+        # fig = plt.figure(figsize=[image_shape[1] / dpi, image_shape[0] / dpi], frameon=False)
+        # num_insts = [len([o for o in d["annotations"] if o["iscrowd"] == 0]) for d in data_dicts]
+        # colors = [[random_color(rgb=True, maximum=1) for _ in range(n)] for n in num_insts]
+        # imgs_name = [d["file_name"].split('/') for d in data_dicts]
+        # for i, d in enumerate(data_dicts):
+        #     ax = plt.Axes(fig, [0.,0.,1.,1.]);  ax.axis("off");  fig.add_axes(ax)
+        #     ax.imshow(images[i][..., ::-1])
+        #     boxes = [o["bbox"] for o in d["annotations"] if o["iscrowd"] == 0]  # xywh
+        #     masks = [segmToMask(o["segmentation"], image_shape) for o in d["annotations"] if o["iscrowd"] == 0]
+        #     for j, box in enumerate(boxes):
+        #         x0, y0, w, h = box
+        #         ax.add_patch(
+        #             mpl.patches.Rectangle((x0, y0), w, h, fill=False, edgecolor=colors[i][j], linewidth=1, alpha=0.5, linestyle="-")
+        #         )
+        #         rgba = np.zeros(image_shape + (4,), dtype=np.float32)
+        #         rgba[..., :3] = mplc.to_rgb(colors[i][j])
+        #         rgba[..., 3] = (masks[j] == 1).astype(np.float32) * 0.5
+        #         ax.imshow(rgba)
 
-        boxes = [
-            np.asarray([
-                BoxMode.convert(
-                    inst["bbox"], inst["bbox_mode"], BoxMode.XYXY_ABS
-                ) for inst in d["annotations"]
-            ]) for d in data_dicts
-        ]
-        aug_inputs = AugInputList(images, boxes, sem_seg_gts)
+        #     plt.savefig(f"./temp/{imgs_name[i][-3]}_{imgs_name[i][-1].split('.')[0]}_0.jpg")
+        #     fig.clear()
+        # plt.close("all")
+
+        aug_inputs = AugInputList(images)
         transforms = aug_inputs.apply_augmentations(self.augmentation)
-        images, sem_seg_gts = aug_inputs.images, aug_inputs.sem_seg_list
+        images = aug_inputs.images
         image_shape = images[0].shape[:2]  # h, w
 
+        # fig = plt.figure(figsize=[image_shape[1] / dpi, image_shape[0] / dpi], frameon=False)
+
         for i, d in enumerate(data_dicts):
-            assert images[i].shape[:2] == image_shape, \
-                f'image size mismatch {image_shape}, img-{d["file_name"]}: {images[i].shape[:2]}'
+            # assert images[i].shape[:2] == image_shape, \
+            #     f'image size mismatch {image_shape}, img-{d["file_name"]}: {images[i].shape[:2]}'
             # Pytorch's dataloader is efficient on torch.Tensor due to shared-memory,
             # but not efficient on large generic data structures due to the use of pickle & mp.Queue.
             # Therefore it's important to use torch.Tensor.
             d["image"] = torch.as_tensor(
                 np.ascontiguousarray(images[i].transpose(2, 0, 1))
             )
-            if sem_seg_gts[i] is not None:
-                d["sem_seg"] = torch.as_tensor(sem_seg_gts[i].astype("long"))
 
             if not self.is_train:
                 d.pop("annotations", None)
@@ -324,6 +382,26 @@ class PairDatasetMapper(DatasetMapperWithBasis):
             if self.recompute_boxes:
                 instances.gt_boxes = instances.gt_masks.get_bounding_boxes()
             d["instances"] = utils.filter_empty_instances(instances)
+
+            # # USER: Debug for visualization
+        #     assert len(instances) == num_insts[i] 
+        #     ax = plt.Axes(fig, [0.,0.,1.,1.]);  ax.axis("off");  fig.add_axes(ax)
+        #     ax.imshow(images[i][..., ::-1])
+        #     boxes = instances.gt_boxes.tensor.numpy()
+        #     masks = instances.gt_masks.tensor.numpy().astype(np.uint8)
+        #     for j, box in enumerate(boxes):
+        #         x0, y0, x1, y1 = box
+        #         ax.add_patch(
+        #             mpl.patches.Rectangle((x0, y0), x1 - x0, y1 - y0, fill=False, edgecolor=colors[i][j], linewidth=1, alpha=0.5, linestyle="-")
+        #         )
+        #         rgba = np.zeros(image_shape + (4,), dtype=np.float32)
+        #         rgba[..., :3] = mplc.to_rgb(colors[i][j])
+        #         rgba[..., 3] = (masks[j] == 1).astype(np.float32) * 0.5
+        #         ax.imshow(rgba)
+
+        #     plt.savefig(f"./temp/{imgs_name[i][-3]}_{imgs_name[i][-1].split('.')[0]}_1.jpg")
+        #     fig.clear()
+        # plt.close('all')
 
         # USER: build targets for instance association
         n = len(data_dicts)

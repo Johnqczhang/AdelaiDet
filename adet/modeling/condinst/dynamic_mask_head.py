@@ -110,6 +110,8 @@ class DynamicMaskHead(nn.Module):
         self.pairwise_dilation = cfg.MODEL.BOXINST.PAIRWISE.DILATION
         self.pairwise_color_thresh = cfg.MODEL.BOXINST.PAIRWISE.COLOR_THRESH
         self._warmup_iters = cfg.MODEL.BOXINST.PAIRWISE.WARMUP_ITERS
+        self.track_enabled = cfg.MODEL.PX_VOLUME.ENABLED
+        self.loss_p3_mask_on = cfg.MODEL.PX_VOLUME.LOSS_P3_MASK_ON
 
         weight_nums, bias_nums = [], []
         for l in range(self.num_layers):
@@ -191,6 +193,13 @@ class DynamicMaskHead(nn.Module):
 
         mask_logits = mask_logits.reshape(-1, 1, H, W)
 
+        if self.track_enabled:
+            mask_p3 = mask_logits.sigmoid()  # (N, 1, H, W)
+            if self.training and self.loss_p3_mask_on:
+                instances.pred_p3_masks = mask_p3
+            else:
+                instances.pred_p3_masks = mask_p3[:, 0]  # (N, H, W)
+
         assert mask_feat_stride >= self.mask_out_stride
         assert mask_feat_stride % self.mask_out_stride == 0
         mask_logits = aligned_bilinear(mask_logits, int(mask_feat_stride / self.mask_out_stride))
@@ -200,11 +209,6 @@ class DynamicMaskHead(nn.Module):
     def __call__(self, mask_feats, mask_feat_stride, pred_instances, gt_instances=None):
         if self.training:
             self._iter += 1
-
-            gt_inds = pred_instances.gt_inds
-            gt_bitmasks = torch.cat([per_im.gt_bitmasks for per_im in gt_instances])
-            gt_bitmasks = gt_bitmasks[gt_inds].unsqueeze(dim=1).to(dtype=mask_feats.dtype)
-
             losses = {}
 
             if len(pred_instances) == 0:
@@ -214,7 +218,13 @@ class DynamicMaskHead(nn.Module):
                 else:
                     losses["loss_prj"] = dummy_loss
                     losses["loss_pairwise"] = dummy_loss
+                if self.loss_p3_mask_on:
+                    losses["loss_mask_p3"] = dummy_loss
             else:
+                gt_inds = pred_instances.gt_inds
+                gt_bitmasks = torch.cat([per_im.gt_bitmasks for per_im in gt_instances])
+                gt_bitmasks = gt_bitmasks[gt_inds].unsqueeze(dim=1).to(dtype=mask_feats.dtype)
+
                 mask_logits = self.mask_heads_forward_with_coords(
                     mask_feats, mask_feat_stride, pred_instances
                 )
@@ -247,6 +257,12 @@ class DynamicMaskHead(nn.Module):
                     mask_losses = dice_coefficient(mask_scores, gt_bitmasks)
                     loss_mask = mask_losses.mean()
                     losses["loss_mask"] = loss_mask
+                if pred_instances.has("pred_p3_masks"):
+                    gt_bitmasks = torch.cat([per_im.gt_bitmasks_p3 for per_im in gt_instances])
+                    gt_bitmasks = gt_bitmasks[gt_inds].unsqueeze(dim=1).to(dtype=mask_feats.dtype)
+                    losses["loss_mask_p3"] = dice_coefficient(
+                        pred_instances.pred_p3_masks, gt_bitmasks
+                    ).mean()
 
             return losses
         else:

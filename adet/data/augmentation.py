@@ -110,27 +110,14 @@ class RandomCropWithInstance(RandomCrop):
 
 
 class AugInputList(StandardAugInput):
-    def __init__(self,
-        images: List[np.ndarray],
-        boxes_list: Optional[List[np.ndarray]],
-        sem_seg_list: Optional[List[np.ndarray]]
-    ):
-        super().__init__(
-            images[0], boxes=boxes_list[0], sem_seg=sem_seg_list[0]
-        )
+    def __init__(self, images: List[np.ndarray]) -> None:
         self.images = images
-        self.boxes_list = boxes_list
-        self.sem_seg_list = sem_seg_list
+        # let self.image pointing to the first image in the list for the callback mechanism
+        self.image = self.images[0]
 
     def transform(self, tfm: T) -> None:
         self.images = [
             tfm.apply_image(image) for image in self.images
         ]
-        if self.boxes_list[0] is not None:
-            self.boxes_list = [
-                tfm.apply_box(boxes) for boxes in self.boxes_list
-            ]
-        if self.sem_seg_list[0] is not None:
-            self.sem_seg_list = [
-                tfm.apply_box(sem) for sem in self.sem_seg_list
-            ]
+        # manually update self.image to avoid missing due to asynchronous data parallel
+        self.image = self.images[0]

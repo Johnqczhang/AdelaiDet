@@ -15,7 +15,7 @@ from detectron2.structures.masks import PolygonMasks, polygons_to_bitmask
 
 from .dynamic_mask_head import build_dynamic_mask_head
 from .mask_branch import build_mask_branch
-from .embedinst import build_embedinst
+from .corr import build_corr_block
 
 from adet.utils.comm import aligned_bilinear
 
@@ -85,7 +85,7 @@ class CondInst(nn.Module):
         self.proposal_generator = build_proposal_generator(cfg, self.backbone.output_shape())
         self.mask_head = build_dynamic_mask_head(cfg)
         self.mask_branch = build_mask_branch(cfg, self.backbone.output_shape())
-        self.embedinst = build_embedinst(cfg, self.backbone.output_shape())
+        self.corr_block = build_corr_block(cfg)
 
         self.mask_out_stride = cfg.MODEL.CONDINST.MASK_OUT_STRIDE
 
@@ -113,17 +113,9 @@ class CondInst(nn.Module):
         pixel_std = torch.Tensor(cfg.MODEL.PIXEL_STD).to(self.device).view(3, 1, 1)
         self.normalizer = lambda x: (x - pixel_mean) / pixel_std
         self.to(self.device)
-        self.freeze_training = cfg.MODEL.EMBEDINST.FREEZE_TRAIN
-        if self.freeze_training:
-            logger.info("Some model parameters are frozen during training, only finetuning the following parameters:")
-            for name, param in self.named_parameters():
-                if "embedinst" not in name:
-                    param.requires_grad = False
-                else:
-                    print(name)
 
     def forward(self, batched_inputs):
-        if self.training and self.embedinst:
+        if self.training and self.corr_block:
             # split the pairwise batch into a single batch, in which the first half is adjacent to the second half
             # e.g., [{"pair_data": [img-1, img-2]}, {"pair_data": [img-8, img-9]}] => [img-1, img-8, img-2, img-9]
             batched_inputs = list(
@@ -173,9 +165,6 @@ class CondInst(nn.Module):
             images_norm, features, gt_instances, self.controller
         )
 
-        if self.embedinst:
-            proposals = self.embedinst(proposals, features, mask_feats)
-
         if self.training:
             mask_losses = self._forward_mask_heads_train(proposals, mask_feats, gt_instances)
 
@@ -183,6 +172,9 @@ class CondInst(nn.Module):
             losses.update(sem_losses)
             losses.update(proposal_losses)
             losses.update(mask_losses)
+            if self.corr_block:
+                corr_losses = self.corr_block.loss(mask_feats, gt_instances)
+                losses.update(corr_losses)
             return losses
         else:
             pred_instances_w_masks = self._forward_mask_heads_test(proposals, mask_feats)
@@ -194,31 +186,18 @@ class CondInst(nn.Module):
                 width = input_per_image.get("width", image_size[1])
 
                 instances_per_im = pred_instances_w_masks[pred_instances_w_masks.im_inds == im_id]
-                # if self.embedinst and len(instances_per_im) > 0:
-                #     if self.embedinst.pixel_head.is_sample_mask_ctr() and instances_per_im.has("pred_global_masks"):
-                #         mask_h, mask_w = instances_per_im.pred_global_masks.size()[-2:]
-                #         factor_h = padded_im_h // mask_h
-                #         factor_w = padded_im_w // mask_w
-                #         assert factor_h == factor_w
-                #         factor = factor_h
-                #         bitmasks = aligned_bilinear(
-                #             instances_per_im.pred_global_masks, factor
-                #         )
-                #         instances_per_im.bitmasks = (bitmasks[:, 0] > 0.5).float()
-                #     instances_per_im = self.proposal_generator.pixel_head.postprocess(
-                #         im_id, instances_per_im
-                #     )
-                #     if instances_per_im.has("bitmasks"):
-                #         instances_per_im.remove("bitmasks")
 
                 instances_per_im = self.postprocess(
                     instances_per_im, height, width,
                     padded_im_h, padded_im_w
                 )
+                if self.corr_block:
+                    instances_per_im = self.corr_block.postprocess(
+                        mask_feats[im_id], instances_per_im
+                    )
 
-                processed_results.append({
-                    "instances": instances_per_im
-                })
+                predictions = dict(instances=instances_per_im)
+                processed_results.append(predictions)
 
             return processed_results
 
@@ -267,10 +246,6 @@ class CondInst(nn.Module):
             mask_feats, self.mask_branch.out_stride,
             pred_instances, gt_instances
         )
-        if self.embedinst:
-            loss_mask.update(
-                self.embedinst.losses(pred_instances, gt_instances)
-            )
 
         return loss_mask
 
@@ -317,6 +292,15 @@ class CondInst(nn.Module):
                 bitmasks = bitmasks_full[:, start::self.mask_out_stride, start::self.mask_out_stride]
                 per_im_gt_inst.gt_bitmasks = bitmasks
                 per_im_gt_inst.gt_bitmasks_full = bitmasks_full
+                if self.corr_block:
+                    bitmasks_p3 = bitmasks_full[:, 4::8, 4::8]
+                    # n, h, w = bitmasks_p3.size()
+                    # bitmasks_p3 = bitmasks_p3.reshape(n, h * w)
+                    per_im_gt_inst.gt_bitmasks_p3 = bitmasks_p3
+                    if per_im_gt_inst.has("corr_ids"):
+                        gt_corr_ids = per_im_gt_inst.corr_ids.clone()
+                        gt_corr_ids[bitmasks_p3.sum(dim=(1,2)) == 0] = -1
+                        per_im_gt_inst.gt_corr_ids = gt_corr_ids
 
     def add_bitmasks_from_boxes(self, instances, images, image_masks, im_h, im_w):
         stride = self.mask_out_stride
