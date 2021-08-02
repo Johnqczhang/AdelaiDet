@@ -120,11 +120,13 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
     # {'file_name': 'COCO_val2014_000000001268.jpg',
     #  'height': 427,
     #  'width': 640,
-    #  'id': 1268,
-    #  'frame_id': 1,
+    #  'id': 1268,  # image id in the entire data set.
+    #  'frame_id': 1,  # image id in the video sequence, starting from 1.
     #  'prev_image_id': -1,
     #  'next_image_id': 2,
-    #  'video_id': 1}
+    #  'video_id': 1
+    #  'num_frames': 600  # number of frames of the video sequence
+    # }
     imgs = coco_api.loadImgs(img_ids)
     # anns is a list[list[dict]], where each dict is an annotation
     # record for an object. The inner list enumerates the objects in an image
@@ -165,8 +167,7 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
     dataset_dicts = []
 
     img_keys = [
-        "height", "width",
-        "frame_id", "prev_image_id", "next_image_id", "video_id"
+        "height", "width", "frame_id", "video_id", "num_frames"
     ]
     ann_keys = ["iscrowd", "bbox", "inst_id", "area", "category_id"] + (extra_annotation_keys or [])
 
@@ -234,37 +235,32 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
 
 
 class PairwiseMapDataset(MapDataset):
+    def __init__(self, dataset, map_func):
+        super().__init__(dataset, map_func)
+        T = map_func.sample_nearby_frames
+        self.nearby_frames_set = set(i for i in range(-T, T + 1) if i != 0)
+
     def __getitem__(self, idx):
-        retry_count = 0
         cur_idx = int(idx)
+        data = self._dataset[cur_idx]
 
-        while True:
-            data = self._map_func(self._dataset[cur_idx])
-            if data is not None:
-                next_idx = cur_idx + 1 if data["next_image_id"] != -1 else cur_idx - 1
-                next_data = self._map_func(self._dataset[next_idx])
-                if next_data is not None:
-                    assert next_data["image_id"] == data["image_id"] + next_idx - cur_idx, \
-                        f'img-{data["image_id"]} and img-{next_data["image_id"]} are not adjacent'
-                    self._fallback_candidates.add(cur_idx)
-                    return {
-                        "width": data["width"],
-                        "height": data["height"],
-                        "pair_data": [data, next_data]
-                    }
+        # randomly sample a frame out of nearby T frames
+        offset = self._rng.sample(self.nearby_frames_set, k=1)[0]
+        next_frame_id = data["frame_id"] + offset
+        if next_frame_id < 1 or next_frame_id > data["num_frames"]:
+            offset = -offset
+        next_idx = cur_idx + offset
+        next_data = self._dataset[next_idx]
+        assert next_data["video_id"] == data["video_id"], \
+            f'img-{data["image_id"]} and img-{next_data["image_id"]} are not sampled from the same video'
+        assert next_data["frame_id"] == data["frame_id"] + offset, \
+            f'img-{data["image_id"]} and img-{next_data["image_id"]} are not adjacent'
 
-            # _map_func fails for this idx, use a random new index from the pool
-            retry_count += 1
-            self._fallback_candidates.discard(cur_idx)
-            cur_idx = self._rng.sample(self._fallback_candidates, k=1)[0]
-
-            if retry_count >= 3:
-                logger = logging.getLogger(__name__)
-                logger.warning(
-                    "Failed to apply `_map_func` for idx: {}, retry count: {}".format(
-                        idx, retry_count
-                    )
-                )
+        return {
+            "width": data["width"],
+            "height": data["height"],
+            "pair_data": self._map_func([data, next_data])
+        }
 
 
 @configurable(from_config=_train_loader_from_config)

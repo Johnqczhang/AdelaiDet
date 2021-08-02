@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import logging
 from skimage import color
-from functools import reduce
 
 import torch
 from torch import nn
@@ -125,9 +124,12 @@ class CondInst(nn.Module):
 
     def forward(self, batched_inputs):
         if self.training and self.embedinst:
-            # convert the format as the same as the previous
-            batched_inputs = reduce(
-                lambda x,y: x+y, list(map(lambda x: x["pair_data"], batched_inputs))
+            # split the pairwise batch into a single batch, in which the first half is adjacent to the second half
+            # e.g., [{"pair_data": [img-1, img-2]}, {"pair_data": [img-8, img-9]}] => [img-1, img-8, img-2, img-9]
+            batched_inputs = list(
+                map(lambda x: x["pair_data"][0], batched_inputs)
+            ) + list(
+                map(lambda x: x["pair_data"][1], batched_inputs)
             )
         original_images = [x["image"].to(self.device) for x in batched_inputs]
 

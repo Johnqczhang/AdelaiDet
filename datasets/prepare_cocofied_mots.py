@@ -87,7 +87,7 @@ def cocofy_mots(phase, val_seq_id):
             {"supercategory": "none", "id": 1, "name": "pedestrian"}
         ],
         "images": [],
-        "videos": [],
+        # "videos": [],
         "annotations": []
     }
 
@@ -111,9 +111,9 @@ def cocofy_mots(phase, val_seq_id):
     inst_ids_dict = dict()
     for seq in sorted(seqs):
         seq_id = int(seq[-2:])
-        out["videos"].append(
-            {"id": seq_id, "file_name": seq}
-        )
+        # out["videos"].append(
+        #     {"id": seq_id, "file_name": seq}
+        # )
         seq_dir = osp.join(data_path, seq)
         img_path = osp.join(seq_dir, "img1")
         imgs = [img for img in os.listdir(img_path) if img.endswith(".jpg")]
@@ -137,7 +137,8 @@ def cocofy_mots(phase, val_seq_id):
                     "id": img_id,  # image number in the entire data set.
                     "prev_image_id": img_id - 1 if i > 0 else -1,
                     "next_image_id": img_id + 1 if i < num_imgs - 1 else -1,
-                    "video_id": seq_id
+                    "video_id": seq_id,
+                    "num_frames": num_imgs
                 }
             )
 
@@ -157,7 +158,7 @@ def cocofy_mots(phase, val_seq_id):
         print(f"{seq}: {num_imgs} images, {num_annos} annotations for {num_insts} instance identities")
 
     num_insts = len(inst_ids_dict)
-    out["num_insts"] = num_insts
+    # out["num_insts"] = num_insts
     print(f"{phase}: {len(out['images'])} images, {len(out['annotations'])} annotations for {num_insts} instance identities")
     with open(out_json, 'w') as f:
         json.dump(out, f, indent=4)

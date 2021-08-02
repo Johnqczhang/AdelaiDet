@@ -37,7 +37,7 @@ from detectron2.evaluation import (
 from detectron2.modeling import GeneralizedRCNNWithTTA
 from detectron2.utils.logger import setup_logger
 
-from adet.data.dataset_mapper import DatasetMapperWithBasis
+from adet.data.dataset_mapper import DatasetMapperWithBasis, PairDatasetMapper
 from adet.data.datasets.mots import build_mots_train_loader
 from adet.config import get_cfg
 from adet.checkpoint import AdetCheckpointer
@@ -116,10 +116,11 @@ class Trainer(DefaultTrainer):
         It calls :func:`detectron2.data.build_detection_train_loader` with a customized
         DatasetMapper, which adds categorical labels as a semantic mask.
         """
-        mapper = DatasetMapperWithBasis(cfg, True)
-        if cfg.MODEL.EMBEDINST.ENABLED:
+        if cfg.MODEL.PX_VOLUME.ENABLED:
+            mapper = PairDatasetMapper(cfg, True)
             return build_mots_train_loader(cfg, mapper=mapper)
         else:
+            mapper = DatasetMapperWithBasis(cfg, True)
             return build_detection_train_loader(cfg, mapper=mapper)
 
     @classmethod

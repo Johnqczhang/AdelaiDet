@@ -3,8 +3,9 @@ import random
 import numpy as np
 from fvcore.transforms import transform as T
 
+from typing import List, Optional
 from detectron2.data.transforms import RandomCrop, StandardAugInput
-from detectron2.structures import BoxMode
+# from detectron2.structures import BoxMode
 
 
 def gen_crop_transform_with_instance(crop_size, image_size, instances, crop_box=True):
@@ -51,7 +52,7 @@ def gen_crop_transform_with_instance(crop_size, image_size, instances, crop_box=
                         len(instances)
                     )
                 )
-                return T.CropTransform(0, 0, image_size[1], image_size[0])
+                # return T.CropTransform(0, 0, image_size[1], image_size[0])
 
     return T.CropTransform(*map(int, (x0, y0, crop_size[1], crop_size[0])))
 
@@ -106,3 +107,30 @@ class RandomCropWithInstance(RandomCrop):
         return gen_crop_transform_with_instance(
             crop_size, image_size, boxes, crop_box=self.crop_instance
         )
+
+
+class AugInputList(StandardAugInput):
+    def __init__(self,
+        images: List[np.ndarray],
+        boxes_list: Optional[List[np.ndarray]],
+        sem_seg_list: Optional[List[np.ndarray]]
+    ):
+        super().__init__(
+            images[0], boxes=boxes_list[0], sem_seg=sem_seg_list[0]
+        )
+        self.images = images
+        self.boxes_list = boxes_list
+        self.sem_seg_list = sem_seg_list
+
+    def transform(self, tfm: T) -> None:
+        self.images = [
+            tfm.apply_image(image) for image in self.images
+        ]
+        if self.boxes_list[0] is not None:
+            self.boxes_list = [
+                tfm.apply_box(boxes) for boxes in self.boxes_list
+            ]
+        if self.sem_seg_list[0] is not None:
+            self.sem_seg_list = [
+                tfm.apply_box(sem) for sem in self.sem_seg_list
+            ]

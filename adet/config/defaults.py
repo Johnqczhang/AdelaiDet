@@ -253,47 +253,10 @@ _C.MODEL.CONDINST.MASK_BRANCH.NUM_CONVS = 4
 _C.MODEL.CONDINST.MASK_BRANCH.SEMANTIC_LOSS_ON = False
 
 
-# The options for EmbedInst, which can generate proposal embeddings and pixel embeddings with CondInst model.
-# The learning of both embeddings is based on EmbedMask for one-stage instance segmentation,
-# please refer to the paper https://arxiv.org/abs/1912.01954
-_C.MODEL.EMBEDINST = CN({"ENABLED": False})
-_C.MODEL.EMBEDINST.EMBED_DIM = 16
-# If True, only finetune on newly added modules
-_C.MODEL.EMBEDINST.FREEZE_TRAIN = False
-
-### Proposal embeddings & learnable margins ###
-# -1: no proposal head
-# 0: no 1x1 conv before the predictions of proposal embeddings and margins
-# n (n > 0): add an extra 1x1 conv layer with n channels before the predictions
-_C.MODEL.EMBEDINST.PROPOSAL_HEAD_CHANNELS = 0
-_C.MODEL.EMBEDINST.USE_MARGIN = True
-_C.MODEL.EMBEDINST.PRIOR_MARGIN = 2.0
-_C.MODEL.EMBEDINST.MARGIN_REDUCE_FACTOR = 32.0
-# TODO: training samples sampling strategy
-# _C.MODEL.EMBEDINST.SAMPLE_IN_MASK = False
-_C.MODEL.EMBEDINST.LOSS_WEIGHT_HINGE = 1.0
-# If True, add a smooth loss that reduces the variance of embeddings for each gt instance
-_C.MODEL.EMBEDINST.LOSS_SMOOTH_ON = False
-_C.MODEL.EMBEDINST.LOSS_WEIGHT_SMOOTH = 0.1
-# If True, add a cross-entropy loss for re-ID classification
-_C.MODEL.EMBEDINST.LOSS_REID_ON = False
-# "focal": FocalLoss, "ce": CrossEntropyLoss
-_C.MODEL.EMBEDINST.LOSS_REID_TYPE = "focal"
-_C.MODEL.EMBEDINST.LOSS_WEIGHT_REID = 0.1
-# Note that the number of instance ids is different when using different one-leave-out settings
-_C.MODEL.EMBEDINST.NUM_INST_IDS = 202
-# TODO: If True, the loss on negative samples which sampled from different videos is also considered (default)
-# _C.MODEL.EMBEDINST.LOSS_INTRA_SEQ_ON = True
-
-### Pixel embeddings ###
-# If True, the model will predict pixel embeddings based on P3 features
-_C.MODEL.EMBEDINST.PIXEL_BRANCH = CN({"ENABLED": False})
-# If True, use mask features output by condinst's mask branch
-_C.MODEL.EMBEDINST.PIXEL_BRANCH.SHARED = False
-_C.MODEL.EMBEDINST.PIXEL_BRANCH.OUT_CHANNELS = 128
-# "l2": euclidean distance | "cos": cosine distance
-_C.MODEL.EMBEDINST.PIXEL_BRANCH.DIST_TYPE = "l2"
-_C.MODEL.EMBEDINST.PIXEL_BRANCH.FIXED_MARGINS = [0.5, 1.5, 0.0]
+_C.MODEL.PX_VOLUME = CN({"ENABLED": False})
+# 1: adjacent frames
+# >1: frames around the current frame 
+_C.MODEL.PX_VOLUME.SAMPLE_NEARBY_FRAMES = 1
 
 
 # The options for BoxInst, which can train the instance segmentation model with box annotations only

@@ -4,7 +4,7 @@ import os.path as osp
 
 import numpy as np
 import torch
-from fvcore.common.file_io import PathManager
+# from fvcore.common.file_io import PathManager
 from PIL import Image
 from pycocotools import mask as maskUtils
 
@@ -14,7 +14,7 @@ from detectron2.data.dataset_mapper import DatasetMapper
 from detectron2.data.detection_utils import SizeMismatchError
 from detectron2.structures import BoxMode
 
-from .augmentation import RandomCropWithInstance
+from .augmentation import RandomCropWithInstance, AugInputList
 from .detection_utils import (annotations_to_instances, build_augmentation,
                               transform_instance_annotations)
 
@@ -79,7 +79,6 @@ class DatasetMapperWithBasis(DatasetMapper):
         self.basis_loss_on = cfg.MODEL.BASIS_MODULE.LOSS_ON
         self.ann_set = cfg.MODEL.BASIS_MODULE.ANN_SET
         self.boxinst_enabled = cfg.MODEL.BOXINST.ENABLED
-        self.track_enabled = cfg.MODEL.EMBEDINST.ENABLED
 
         if self.boxinst_enabled:
             self.use_instance_mask = False
@@ -184,16 +183,6 @@ class DatasetMapperWithBasis(DatasetMapper):
             instances = annotations_to_instances(
                 annos, image_shape, mask_format=self.instance_mask_format
             )
-            if self.track_enabled:
-                instances.video_ids = torch.as_tensor(
-                    [int(dataset_dict["video_id"]) for _ in annos], dtype=torch.int64 
-                )
-                instances.frame_ids = torch.as_tensor(
-                    [int(dataset_dict["frame_id"]) for _ in annos], dtype=torch.int64 
-                )
-                instances.inst_ids = torch.as_tensor(
-                    [int(obj["inst_id"]) for obj in annos], dtype=torch.int64
-                )
 
             # After transforms such as cropping are applied, the bounding box may no longer
             # tightly bound the object. As an example, imagine a triangle object
@@ -224,3 +213,154 @@ class DatasetMapperWithBasis(DatasetMapper):
             basis_sem_gt = torch.as_tensor(basis_sem_gt.astype("long"))
             dataset_dict["basis_sem"] = basis_sem_gt
         return dataset_dict
+
+
+class PairDatasetMapper(DatasetMapperWithBasis):
+    def __init__(self, cfg, is_train):
+        super().__init__(cfg, is_train=is_train)
+
+        self.sample_nearby_frames = cfg.MODEL.PX_VOLUME.SAMPLE_NEARBY_FRAMES
+
+    def __call__(self, data_dicts):
+        data_dicts = [copy.deepcopy(d) for d in data_dicts]
+        try:
+            images = [
+                utils.read_image(d["file_name"], format=self.image_format)
+                for d in data_dicts
+            ]
+        except Exception as e:
+            print([d["file_name"] for d in data_dicts])
+            print(e)
+            raise e
+        for d, img in zip(data_dicts, images):
+            try:
+                utils.check_image_size(d, img)
+            except SizeMismatchError as e:
+                expected_wh = (d["width"], d["height"])
+                image_wh = (img.shape[1], img.shape[0])
+                if (image_wh[1], image_wh[0]) == expected_wh:
+                    print(f'transposing image {d["file_name"]}')
+                    img = img.transpose(1, 0, 2)
+                else:
+                    raise e
+
+        if "sem_seg_file_name" in data_dicts[0]:
+            sem_seg_gts = [
+                utils.read_image(d.pop("sem_seg_file_name"), "L").squeeze(2)
+                for d in data_dicts
+            ]
+        else:
+            sem_seg_gts = [None for _ in data_dicts]
+
+        boxes = [
+            np.asarray([
+                BoxMode.convert(
+                    inst["bbox"], inst["bbox_mode"], BoxMode.XYXY_ABS
+                ) for inst in d["annotations"]
+            ]) for d in data_dicts
+        ]
+        aug_inputs = AugInputList(images, boxes, sem_seg_gts)
+        transforms = aug_inputs.apply_augmentations(self.augmentation)
+        images, sem_seg_gts = aug_inputs.images, aug_inputs.sem_seg_list
+        image_shape = images[0].shape[:2]  # h, w
+
+        for i, d in enumerate(data_dicts):
+            assert images[i].shape[:2] == image_shape, \
+                f'image size mismatch {image_shape}, img-{d["file_name"]}: {images[i].shape[:2]}'
+            # Pytorch's dataloader is efficient on torch.Tensor due to shared-memory,
+            # but not efficient on large generic data structures due to the use of pickle & mp.Queue.
+            # Therefore it's important to use torch.Tensor.
+            d["image"] = torch.as_tensor(
+                np.ascontiguousarray(images[i].transpose(2, 0, 1))
+            )
+            if sem_seg_gts[i] is not None:
+                d["sem_seg"] = torch.as_tensor(sem_seg_gts[i].astype("long"))
+
+            if not self.is_train:
+                d.pop("annotations", None)
+                d.pop("sem_seg_file_name", None)
+                d.pop("pano_seg_file_name", None)
+
+            if "annotations" not in d:
+                continue
+
+            # USER: Modify this if you want to keep them for some reason.
+            for anno in d["annotations"]:
+                if not self.use_instance_mask:
+                    anno.pop("segmentation", None)
+                if not self.use_keypoint:
+                    anno.pop("keypoints", None)
+
+            # USER: Implement additional transformations if you have other types of data
+            annos = [
+                transform_instance_annotations(
+                    obj,
+                    transforms,
+                    image_shape,
+                    keypoint_hflip_indices=self.keypoint_hflip_indices,
+                )
+                for obj in d.pop("annotations")
+                if obj.get("iscrowd", 0) == 0
+            ]
+            instances = annotations_to_instances(
+                annos, image_shape, mask_format=self.instance_mask_format
+            )
+            # instances.video_ids = torch.as_tensor(
+            #     [int(d["video_id"]) for _ in annos], dtype=torch.int64
+            # )
+            # USER: frame id, starting from 1 in each video sequence
+            instances.frame_ids = torch.as_tensor(
+                [int(d["frame_id"]) for _ in annos], dtype=torch.int64
+            )
+            # USER: instance identity id, unique in the entire dataset
+            instances.inst_ids = torch.as_tensor(
+                [int(obj["inst_id"]) for obj in annos], dtype=torch.int64
+            )
+
+            # After transforms such as cropping are applied, the bounding box may no longer
+            # tightly bound the object. As an example, imagine a triangle object
+            # [(0,0), (2,0), (0,2)] cropped by a box [(1,0),(2,2)] (XYXY format). The tight
+            # bounding box of the cropped triangle should be [(1,0),(2,1)], which is not equal to
+            if self.recompute_boxes:
+                instances.gt_boxes = instances.gt_masks.get_bounding_boxes()
+            d["instances"] = utils.filter_empty_instances(instances)
+
+        # USER: build targets for instance association
+        n = len(data_dicts)
+        corr_ids = [[] for _ in range(n)]
+        for i, d1 in enumerate(data_dicts):
+            if len(corr_ids[i]) == n - 1:
+                d1["instances"].corr_ids = torch.stack(
+                    corr_ids[i], dim=1
+                )  # (num_insts, n - 1)
+                continue
+
+            inst_ids1 = d1["instances"].inst_ids
+            for j, d2 in enumerate(data_dicts):
+                if i == j or len(corr_ids[i]) >= j:
+                    continue
+
+                inst_ids2 = d2["instances"].inst_ids
+                corr_ids1, corr_ids2 = get_corr_ids(inst_ids1, inst_ids2)
+                corr_ids[i].append(corr_ids1)
+                corr_ids[j].append(corr_ids2)
+
+            if len(corr_ids[i]) == n - 1:
+                d1["instances"].corr_ids = torch.stack(
+                    corr_ids[i], dim=1
+                )  # (num_insts, n - 1)
+                continue
+
+        return data_dicts
+
+
+def get_corr_ids(inst_ids1, inst_ids2):
+    # ids_mat: n1 x n2
+    ids_mat = inst_ids1[:, None] == inst_ids2[None]
+    corr_ids1 = inst_ids1.new_ones(len(inst_ids1)) * -1
+    inds = ids_mat.nonzero().t()
+    corr_ids1[inds[0]] = inds[1]
+    corr_ids2 = inst_ids2.new_ones(len(inst_ids2)) * -1
+    inds = ids_mat.t().nonzero().t()
+    corr_ids2[inds[0]] = inds[1]
+    return corr_ids1, corr_ids2
