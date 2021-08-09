@@ -156,6 +156,7 @@ class CondInst(nn.Module):
                 )
             else:
                 self.add_bitmasks(gt_instances, images_norm.tensor.size(-2), images_norm.tensor.size(-1))
+            self.add_centers(gt_instances)
         else:
             gt_instances = None
 
@@ -173,7 +174,7 @@ class CondInst(nn.Module):
             losses.update(proposal_losses)
             losses.update(mask_losses)
             if self.corr_block:
-                corr_losses = self.corr_block.loss(mask_feats, gt_instances)
+                corr_losses = self.corr_block.loss(mask_feats, self.mask_branch.out_stride, gt_instances)
                 losses.update(corr_losses)
             return losses
         else:
@@ -193,7 +194,7 @@ class CondInst(nn.Module):
                 )
                 if self.corr_block:
                     instances_per_im = self.corr_block.postprocess(
-                        mask_feats[im_id], instances_per_im
+                        mask_feats[im_id], self.mask_branch.out_stride, instances_per_im
                     )
 
                 predictions = dict(instances=instances_per_im)
@@ -259,6 +260,23 @@ class CondInst(nn.Module):
         )
 
         return pred_instances_w_masks
+
+    def add_centers(self, instances):
+        for per_im_gt_inst in instances:
+            if per_im_gt_inst.has("gt_bitmasks_full"):
+                bitmasks = per_im_gt_inst.gt_bitmasks_full  # (n_inst, h, w)
+                h, w = bitmasks.size()[1:3]
+                ys = torch.arange(0, h, dtype=torch.float32, device=bitmasks.device)
+                xs = torch.arange(0, w, dtype=torch.float32, device=bitmasks.device)
+
+                m00 = bitmasks.sum(dim=(1, 2)).clip(min=1e-6)
+                m10 = (bitmasks * xs).sum(dim=(1, 2))
+                m01 = (bitmasks * ys[:, None]).sum(dim=(1, 2))
+                centers = torch.stack([m10, m01], dim=1) / m00[:, None]
+            else:
+                boxes = per_im_gt_inst.gt_boxes.tensor
+                centers = (boxes[..., 0:2] + boxes[..., 2:4]) * 0.5
+            per_im_gt_inst.gt_centers = centers
 
     def add_bitmasks(self, instances, im_h, im_w):
         for per_im_gt_inst in instances:
@@ -384,6 +402,9 @@ class CondInst(nn.Module):
             pred_global_masks = aligned_bilinear(
                 results.pred_global_masks, factor
             )
+            if self.corr_block:
+                results.pred_global_masks = (pred_global_masks[:, 0] > mask_threshold).float()
+
             pred_global_masks = pred_global_masks[:, :, :resized_im_h, :resized_im_w]
             pred_global_masks = F.interpolate(
                 pred_global_masks,

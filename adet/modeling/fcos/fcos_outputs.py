@@ -149,8 +149,10 @@ class FCOSOutputs(nn.Module):
 
         return training_targets
 
-    def get_sample_region(self, boxes, strides, num_loc_list, loc_xs, loc_ys, bitmasks=None, radius=1):
-        if bitmasks is not None:
+    def get_sample_region(self, boxes, strides, num_loc_list, loc_xs, loc_ys, bitmasks=None, radius=1, centers=None):
+        if centers is not None:
+            center_x, center_y = centers[..., 0], centers[..., 1]
+        elif bitmasks is not None:
             _, h, w = bitmasks.size()
 
             ys = torch.arange(0, h, dtype=torch.float32, device=bitmasks.device)
@@ -224,13 +226,15 @@ class FCOSOutputs(nn.Module):
             reg_targets_per_im = torch.stack([l, t, r, b], dim=2)
 
             if self.center_sample:
-                if targets_per_im.has("gt_bitmasks_full"):
+                bitmasks, centers = None, None
+                if targets_per_im.has("gt_centers"):
+                    centers = targets_per_im.gt_centers
+                elif targets_per_im.has("gt_bitmasks_full"):
                     bitmasks = targets_per_im.gt_bitmasks_full
-                else:
-                    bitmasks = None
+
                 is_in_boxes = self.get_sample_region(
                     bboxes, self.strides, num_loc_list, xs, ys,
-                    bitmasks=bitmasks, radius=self.radius
+                    bitmasks=bitmasks, radius=self.radius, centers=centers
                 )
             else:
                 is_in_boxes = reg_targets_per_im.min(dim=2)[0] > 0

@@ -261,6 +261,7 @@ _C.MODEL.PX_VOLUME.SAMPLE_NEARBY_FRAMES = 1
 # using the gt (for training) or predicted (for inference) mask.
 # - "avg": average pooling over all foregound pixel features (e.g., MOTSNet)
 # - "max": max pooling over all foreground pixel features
+# - "ctr": extract features at the mass center over all foreground pixels  (e.g., FairMOT)
 _C.MODEL.PX_VOLUME.MASK_POOLER_TYPE = "avg"
 _C.MODEL.PX_VOLUME.LOSS_NCE_TEMP = 0.07
 _C.MODEL.PX_VOLUME.LOSS_WEIGHT = 0.5

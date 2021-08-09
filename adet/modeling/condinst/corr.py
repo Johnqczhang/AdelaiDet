@@ -57,7 +57,7 @@ class CorrBlock:
         corr = torch.einsum("npc,nqc->npq", [mask_feats[:n], mask_feats[n:]])
         return corr
 
-    def loss(self, mask_feats, gt_instances):
+    def loss(self, mask_feats, mask_feat_stride, gt_instances):
         # mask_feats: (N, C, H, W)
         # normalization over the feature dimension
         if self.norm_feats_on:
@@ -70,14 +70,21 @@ class CorrBlock:
             if len(gt_instances[i]) == 0 or len(gt_instances[j]) == 0:
                 continue
 
-            gt_ids1 = gt_instances[i].gt_corr_ids[:, 0]
-            gt_ids2 = gt_instances[j].gt_corr_ids[:, 0]
-            gt_masks1 = gt_instances[i].gt_bitmasks_p3  # (N1, H, W)
-            gt_masks2 = gt_instances[j].gt_bitmasks_p3  # (N2, H, W)
-            feats1 = mask_feats_pooler(mask_feats[i], gt_masks1, self.pooler_type)
-            feats2 = mask_feats_pooler(mask_feats[j], gt_masks2, self.pooler_type)
+            if self.pooler_type == "ctr":
+                ctr1 = (gt_instances[i].gt_centers / mask_feat_stride).long()
+                ctr2 = (gt_instances[j].gt_centers / mask_feat_stride).long()
+                feats1 = mask_feats[i, :, ctr1[:, 1], ctr1[:, 0]].t()
+                feats2 = mask_feats[j, :, ctr2[:, 1], ctr2[:, 0]].t()
+            else:
+                gt_masks1 = gt_instances[i].gt_bitmasks_p3  # (N1, H, W)
+                gt_masks2 = gt_instances[j].gt_bitmasks_p3  # (N2, H, W)
+                feats1 = mask_feats_pooler(mask_feats[i], gt_masks1, self.pooler_type)
+                feats2 = mask_feats_pooler(mask_feats[j], gt_masks2, self.pooler_type)
+
             corr = torch.einsum("pc,qc->pq", [feats1, feats2]) / self.T
 
+            gt_ids1 = gt_instances[i].gt_corr_ids[:, 0]
+            gt_ids2 = gt_instances[j].gt_corr_ids[:, 0]
             loss1 = F.cross_entropy(corr, gt_ids1, ignore_index=-1)
             loss2 = F.cross_entropy(corr.t(), gt_ids2, ignore_index=-1)
             loss_corr.extend([loss1, loss2])
@@ -89,11 +96,30 @@ class CorrBlock:
 
         return dict(loss_corr=loss_corr)
 
-    def postprocess(self, mask_fmap, pred_instances):
+    def postprocess(self, mask_fmap, mask_feat_stride, pred_instances):
         # mask_fmap: (C, H, W)
         if self.norm_feats_on:
             mask_fmap = F.normalize(mask_fmap, dim=0)
-        pred_masks = pred_instances.pred_p3_masks  # (N, H, W)
-        pred_instances.pred_mfeats = mask_feats_pooler(mask_fmap, pred_masks, self.pooler_type)
+        if self.pooler_type == "ctr":
+            ctrs = get_mask_centers(pred_instances.pred_global_masks)
+            ctrs = (ctrs / mask_feat_stride).long()
+            mfeats = mask_fmap[:, ctrs[:, 1], ctrs[:, 0]].t()
+        else:
+            pred_masks = pred_instances.pred_p3_masks  # (N, H, W)
+            mfeats = mask_feats_pooler(mask_fmap, pred_masks, self.pooler_type)
 
+        pred_instances.pred_mfeats = mfeats
         return pred_instances
+
+
+def get_mask_centers(masks):
+    h, w = masks.size()[1:3]
+    ys = torch.arange(0, h, dtype=torch.float32, device=masks.device)
+    xs = torch.arange(0, w, dtype=torch.float32, device=masks.device)
+
+    m00 = masks.sum(dim=(1, 2)).clip(min=1e-6)
+    m10 = (masks * xs).sum(dim=(1, 2))
+    m01 = (masks * ys[:, None]).sum(dim=(1, 2))
+    centers = torch.stack([m10, m01], dim=1) / m00[:, None]
+
+    return centers
