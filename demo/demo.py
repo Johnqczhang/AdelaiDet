@@ -77,29 +77,27 @@ def infer_with_tracking(args, demo, tracker):
     if not osp.exists(args.output) or not osp.exists(out_imgs_dir):
         os.system(f"mkdir -p {out_imgs_dir}")
 
-    if args.mots_txt and osp.exists(args.mots_txt):
-        os.system(f"rm -rf {args.mots_txt}")
-
     infer_time = 0
+    txt_results = []
     for frame_id, path in enumerate(tqdm.tqdm(args.imgs, disable=args.mots_txt), 1):
         # use PIL, to be consistent with evaluation
         img = read_image(path, format="BGR")
         start_time = time.time()
-        predictions, visualized_output, track_ids = demo.run_on_image_with_tracker(
+        pred_instances, visualized_output, track_ids = demo.run_on_image_with_tracker(
             img, tracker, frame_id
         )
         runtime = time.time() - start_time
         infer_time += runtime
         print(
-            f"{path}: detected {len(track_ids):2d}/{len(predictions['instances']):2d} instances in {runtime:.2f}s"
+            f"{path}: detected {len(pred_instances):2d} instances in {runtime:.2f}s"
         )
         if args.mots_txt:
-            mots_results = parse_mots_results(img, frame_id, tracker.instances, track_ids)
-            with open(args.mots_txt, 'a+') as f:
-                f.writelines(mots_results)
-        out_filename = osp.join(out_imgs_dir, osp.basename(path))
-        visualized_output.save(out_filename)
+            txt_results.extend(parse_mots_results(img, frame_id, pred_instances, track_ids))
+        vis_img_filename = osp.join(out_imgs_dir, osp.basename(path))
+        visualized_output.save(vis_img_filename)
 
+    with open(args.mots_txt, 'w') as f:
+        f.writelines(txt_results)
     video_cmd = f"ffmpeg -threads 2 -y -f image2 -r {args.fps} -i {out_imgs_dir}/%06d.jpg"
     video_file = osp.join(args.output, f"{args.output.split('/')[-1]}.mp4")
     video_cmd += f" -b:v 5000k -c:v mpeg4 {video_file}"

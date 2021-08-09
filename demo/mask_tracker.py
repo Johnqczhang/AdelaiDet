@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch.nn.functional as F
 import pycocotools.mask as mask_util
 
 from motmetrics.lap import linear_sum_assignment
@@ -25,106 +26,45 @@ class MaskTracker(BaseTracker):
         self.track_metric = track_metric
         self.match_thr = match_thr
 
-    def compute_dists_by_miou(self, cur_ids, track_ids):
-        cur_masks = mask2rles(self.instances.pred_masks[cur_ids])
+    def compute_dists_by_miou(self, metrics, track_ids):
         track_masks = mask2rles(self.get("masks", track_ids))
-        iscrowd = [0 for _ in range(len(cur_masks))]
+        cur_masks = mask2rles(metrics["masks"])
+        iscrowd = [0] * len(cur_masks)
         mious = mask_util.iou(track_masks, cur_masks, iscrowd)
         return 1 - mious
 
-    def get(self, item, ids, **kwargs):
-        if item == "pixel_embeds":
-            outs = [
-                self.tracks[id][item][-1][0] for id in ids
-            ]
-            return outs
-        else:
-            return super().get(item, ids, **kwargs)
-
-    def compute_cos_dists(self, embeds1, embeds2):
-        m, n = len(embeds1), len(embeds2)
-        dists = torch.full((m, n), -1, dtype=torch.float32)
-        for i in range(m):
-            if len(embeds1[i]) == 0:
-                continue
-            m1 = torch.linalg.norm(embeds1[i], dim=1)
-            for j in range(n):
-                if len(embeds2[j]) == 0:
-                    continue
-                m2 = torch.linalg.norm(embeds2[j], dim=1)
-                mod = (m1[:, None] * m2[None]).clip(min=1e-8)
-                d_mat = embeds1[i].matmul(embeds2[j].t()) / mod
-                dists[i, j] = 1 - d_mat.amax(dim=1).mean()
-            dists[i][dists[i] == -1] = dists[i].max()
-        dists = dists.where(dists != -1, dists.amax(dim=0))
-        return dists.numpy()
-
-    def compute_l2_dists(self, embeds1, embeds2):
-        m, n = len(embeds1), len(embeds2)
-        dists = torch.full((m, n), -1, dtype=torch.float32)
-        for i in range(m):
-            if len(embeds1[i]) == 0:
-                continue
-            for j in range(n):
-                if len(embeds2[j]) == 0:
-                    continue
-                d_mat = (embeds1[i][:, None] - embeds2[j][None]).square().sum(dim=-1).sqrt()
-                dists[i, j] = d_mat.amin(dim=1).mean()
-            dists[i][dists[i] == -1] = dists[i].max()
-        dists = dists.where(dists != -1, dists.amax(dim=0))
-        return dists.numpy()
-
-    def compute_dists_by_inst_embeds(self, cur_ids, track_ids):
-        cur_embeds = self.instances.pred_embeds[cur_ids]
-        track_embeds = self.get("pred_embeds", track_ids)
-        emb1, emb2 = track_embeds, cur_embeds
-        if "preb-mar" in self.track_metric:
-            emb1, var1 = emb1.split(2, dim=1)
-            emb2, var2 = emb2.split(2, dim=1)
-            vars = 4 * var1[:, None] * var2[None] / (var1[:, None] + var2[None])
-        else:
-            vars = 0.5
-
-        dists = (emb1[:, None] - emb2[None]).square()
-        probs = 1 - (-(dists * vars).sum(dim=-1)).exp()
+    def compute_dists_by_mfeats(self, metrics, track_ids):
+        track_mfeats = self.get("mfeats_l2_norm", track_ids)
+        cur_mfeats = metrics["mfeats_l2_norm"]
+        # For two l2-normalized vectors X, Y, we have
+        # ||X - Y||^2 = 2 * (1 - cos(X, Y))
+        dists = (track_mfeats[:, None] - cur_mfeats[None]).square().sum(dim=-1) * 0.5
+        dists = dists.numpy()
 
         if "miou" in self.track_metric:
-            miou = self.compute_dists_by_miou(cur_ids, track_ids)
-            if "+miou" in self.track_metric:
-                probs = (probs + miou) * 0.5
-            elif "*miou" in self.track_metric:
-                probs = 1 - (1 - probs) * (1 - miou)
-            else:
-                raise NotImplementedError
-
-        return probs
-
-    def compute_dists_by_pixel_embeds(self, cur_ids, track_ids):
-        cur_embeds = self.instances.pixel_embeds[cur_ids].embeds_list
-        track_embeds = self.get("pixel_embeds", track_ids)
-        if "l2" in self.track_metric:
-            dists = self.compute_l2_dists(track_embeds, cur_embeds)
-        elif "cos" in self.track_metric:
-            dists = self.compute_cos_dists(track_embeds, cur_embeds)
-
-        if "miou" in self.track_metric:
-            dists *= self.compute_dists_by_miou(cur_ids, track_ids)
+            mious = self.compute_dists_by_miou(metrics, track_ids)
+            if "+" in self.track_metric:
+                dists = (dists + mious) * 0.5
+            elif "*" in self.track_metric:
+                dists = 1 - (1 - dists) * (1 - mious)
 
         return dists
 
-    def track(self, frame_id):
-        num_inst = len(self.instances)
+    def track(self, frame_id, instances):
+        num_inst = len(instances)
         if num_inst == 0:
             return torch.arange(num_inst)
 
-        assert self.instances.has("pred_masks")
-        metrics = dict(masks=self.instances.pred_masks)
-        if "preb" in self.track_metric:  # "preb" mean proposal embeds
-            assert self.instances.has("pred_embeds")
-            metrics["pred_embeds"] = self.instances.pred_embeds
-        if "pxeb" in self.track_metric:  # "pxeb" means pixel embeds
-            assert self.instances.has("pixel_embeds")
-            metrics["pixel_embeds"] = self.instances.pixel_embeds.embeds_list
+        metrics = {}
+
+        if "miou" in self.track_metric:  # "miou" means association using mask IoU
+            assert instances.has("pred_masks")
+            metrics["masks"] = instances.pred_masks
+        if "mfeats" in self.track_metric:
+            assert instances.has("pred_mfeats")
+            # l2 normalization along the feature dimension
+            mfeats_norm = F.normalize(instances.pred_mfeats, dim=1)
+            metrics["mfeats_l2_norm"] = mfeats_norm  # (num_inst, C)
 
         if self.empty:
             ids = torch.arange(self.num_tracks, self.num_tracks + num_inst)
@@ -134,20 +74,20 @@ class MaskTracker(BaseTracker):
             track_ids = [
                 id for id in self.ids if id not in ids
                 and self.tracks[id].frame_ids[-1] == frame_id - 1
-                # and self.tracks[id].frame_ids[-1] > frame_id - self.num_frames_retain
+                # and self.tracks[id].frame_ids[-1] >= frame_id - self.num_frames_retain
             ]
             if len(track_ids) > 0:
-                cur_ids = torch.arange(num_inst)
                 if self.track_metric == "miou":
-                    dists = self.compute_dists_by_miou(cur_ids, track_ids)
-                elif "preb" in self.track_metric:
-                    dists = self.compute_dists_by_inst_embeds(cur_ids, track_ids)
-                elif "pxeb" in self.track_metric:
-                    dists = self.compute_dists_by_pixel_embeds(cur_ids, track_ids)  
+                    dists = self.compute_dists_by_miou(metrics, track_ids)
+                elif "mfeats" in self.track_metric:
+                    dists = self.compute_dists_by_mfeats(metrics, track_ids)
+                else:
+                    raise NotImplementedError
+
                 row, col = linear_sum_assignment(dists)
                 for r, c in zip(row, col):
                     if dists[r, c] < 1 - self.match_thr:
-                        ids[cur_ids[c]] = track_ids[r]
+                        ids[c] = track_ids[r]
 
             new_track_inds = ids == -1
             ids[new_track_inds] = torch.arange(
@@ -160,9 +100,8 @@ class MaskTracker(BaseTracker):
 
 
 def parse_mots_results(img, frame_id, instances, track_ids):
-    mots_results = ""
-    num_inst = len(instances)
-    if num_inst == 0:
+    mots_results = []
+    if len(instances) == 0:
         return mots_results
 
     img_h, img_w = img.shape[:2]
@@ -171,7 +110,7 @@ def parse_mots_results(img, frame_id, instances, track_ids):
 
     for track_id, rle in zip(track_ids, rles):
         obj_id = 2000 + track_id
-        mots_results += f"{frame_id} {obj_id} {cls_id} {img_h} {img_w} {rle['counts']}\n"
+        mots_results.append(f"{frame_id} {obj_id} {cls_id} {img_h} {img_w} {rle['counts']}\n")
 
     return mots_results
 

@@ -83,11 +83,10 @@ class VisualizationDemo(object):
         visualizer = TrackVisualizer(image, self.metadata, instance_mode=self.instance_mode)
         instances = predictions["instances"].to(self.cpu_device)
         instances = instances[instances.pred_classes == 0]
-        tracker.instances = instances
-        track_ids = tracker.track(frame_id)
-        visualizer.track_ids = track_ids.numpy()
+        track_ids = tracker.track(frame_id, instances).numpy()
+        visualizer.track_ids = track_ids
         vis_output = visualizer.draw_instance_predictions(predictions=instances)
-        return predictions, vis_output, track_ids
+        return instances, vis_output, track_ids
 
     def _frame_from_video(self, video):
         while video.isOpened():
