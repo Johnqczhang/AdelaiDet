@@ -403,42 +403,4 @@ class PairDatasetMapper(DatasetMapperWithBasis):
         #     fig.clear()
         # plt.close('all')
 
-        # USER: build targets for instance association
-        n = len(data_dicts)
-        corr_ids = [[] for _ in range(n)]
-        for i, d1 in enumerate(data_dicts):
-            if len(corr_ids[i]) == n - 1:
-                d1["instances"].corr_ids = torch.stack(
-                    corr_ids[i], dim=1
-                )  # (num_insts, n - 1)
-                continue
-
-            inst_ids1 = d1["instances"].inst_ids
-            for j, d2 in enumerate(data_dicts):
-                if i == j or len(corr_ids[i]) >= j:
-                    continue
-
-                inst_ids2 = d2["instances"].inst_ids
-                corr_ids1, corr_ids2 = get_corr_ids(inst_ids1, inst_ids2)
-                corr_ids[i].append(corr_ids1)
-                corr_ids[j].append(corr_ids2)
-
-            if len(corr_ids[i]) == n - 1:
-                d1["instances"].corr_ids = torch.stack(
-                    corr_ids[i], dim=1
-                )  # (num_insts, n - 1)
-                continue
-
         return data_dicts
-
-
-def get_corr_ids(inst_ids1, inst_ids2):
-    # ids_mat: n1 x n2
-    ids_mat = inst_ids1[:, None] == inst_ids2[None]
-    corr_ids1 = inst_ids1.new_ones(len(inst_ids1)) * -1
-    inds = ids_mat.nonzero().t()
-    corr_ids1[inds[0]] = inds[1]
-    corr_ids2 = inst_ids2.new_ones(len(inst_ids2)) * -1
-    inds = ids_mat.t().nonzero().t()
-    corr_ids2[inds[0]] = inds[1]
-    return corr_ids1, corr_ids2

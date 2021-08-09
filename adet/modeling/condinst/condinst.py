@@ -310,15 +310,9 @@ class CondInst(nn.Module):
                 bitmasks = bitmasks_full[:, start::self.mask_out_stride, start::self.mask_out_stride]
                 per_im_gt_inst.gt_bitmasks = bitmasks
                 per_im_gt_inst.gt_bitmasks_full = bitmasks_full
-                if self.corr_block:
+                if self.mask_head.use_p3_mask:
                     bitmasks_p3 = bitmasks_full[:, 4::8, 4::8]
-                    # n, h, w = bitmasks_p3.size()
-                    # bitmasks_p3 = bitmasks_p3.reshape(n, h * w)
                     per_im_gt_inst.gt_bitmasks_p3 = bitmasks_p3
-                    if per_im_gt_inst.has("corr_ids"):
-                        gt_corr_ids = per_im_gt_inst.corr_ids.clone()
-                        gt_corr_ids[bitmasks_p3.sum(dim=(1,2)) == 0] = -1
-                        per_im_gt_inst.gt_corr_ids = gt_corr_ids
 
     def add_bitmasks_from_boxes(self, instances, images, image_masks, im_h, im_w):
         stride = self.mask_out_stride

@@ -70,23 +70,30 @@ class CorrBlock:
             if len(gt_instances[i]) == 0 or len(gt_instances[j]) == 0:
                 continue
 
+            corr_ids1, corr_ids2 = get_corr_ids(
+                gt_instances[i].inst_ids,
+                gt_instances[j].inst_ids
+            )
+
             if self.pooler_type == "ctr":
                 ctr1 = (gt_instances[i].gt_centers / mask_feat_stride).long()
                 ctr2 = (gt_instances[j].gt_centers / mask_feat_stride).long()
                 feats1 = mask_feats[i, :, ctr1[:, 1], ctr1[:, 0]].t()
                 feats2 = mask_feats[j, :, ctr2[:, 1], ctr2[:, 0]].t()
+                corr_ids1[ctr1.sum(dim=1) == 0] = -1
+                corr_ids2[ctr2.sum(dim=1) == 0] = -1
             else:
                 gt_masks1 = gt_instances[i].gt_bitmasks_p3  # (N1, H, W)
                 gt_masks2 = gt_instances[j].gt_bitmasks_p3  # (N2, H, W)
                 feats1 = mask_feats_pooler(mask_feats[i], gt_masks1, self.pooler_type)
                 feats2 = mask_feats_pooler(mask_feats[j], gt_masks2, self.pooler_type)
+                corr_ids1[gt_masks1.sum(dim=(1, 2)) == 0] = -1
+                corr_ids2[gt_masks2.sum(dim=(1, 2)) == 0] = -1
 
             corr = torch.einsum("pc,qc->pq", [feats1, feats2]) / self.T
 
-            gt_ids1 = gt_instances[i].gt_corr_ids[:, 0]
-            gt_ids2 = gt_instances[j].gt_corr_ids[:, 0]
-            loss1 = F.cross_entropy(corr, gt_ids1, ignore_index=-1)
-            loss2 = F.cross_entropy(corr.t(), gt_ids2, ignore_index=-1)
+            loss1 = F.cross_entropy(corr, corr_ids1, ignore_index=-1)
+            loss2 = F.cross_entropy(corr.t(), corr_ids2, ignore_index=-1)
             loss_corr.extend([loss1, loss2])
 
         if len(loss_corr) == 0:
@@ -123,3 +130,15 @@ def get_mask_centers(masks):
     centers = torch.stack([m10, m01], dim=1) / m00[:, None]
 
     return centers
+
+
+def get_corr_ids(inst_ids1, inst_ids2):
+    # ids_mat: n1 x n2
+    ids_mat = inst_ids1[:, None] == inst_ids2[None]
+    corr_ids1 = inst_ids1.new_ones(len(inst_ids1)) * -1
+    inds = ids_mat.nonzero().t()
+    corr_ids1[inds[0]] = inds[1]
+    corr_ids2 = inst_ids2.new_ones(len(inst_ids2)) * -1
+    inds = ids_mat.t().nonzero().t()
+    corr_ids2[inds[0]] = inds[1]
+    return corr_ids1, corr_ids2

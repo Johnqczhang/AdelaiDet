@@ -266,7 +266,7 @@ _C.MODEL.PX_VOLUME.MASK_POOLER_TYPE = "avg"
 _C.MODEL.PX_VOLUME.LOSS_NCE_TEMP = 0.07
 _C.MODEL.PX_VOLUME.LOSS_WEIGHT = 0.5
 # If True, compute segmentation loss on masks of p3 level
-_C.MODEL.PX_VOLUME.LOSS_P3_MASK_ON = False
+_C.MODEL.PX_VOLUME.USE_P3_MASK = False
 # If True, enable vectorized operations
 _C.MODEL.PX_VOLUME.VEC_OP_ON = False
 # If True, normalize pixel-wise features before computing correlations

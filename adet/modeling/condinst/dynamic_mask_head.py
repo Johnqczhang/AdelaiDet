@@ -110,8 +110,7 @@ class DynamicMaskHead(nn.Module):
         self.pairwise_dilation = cfg.MODEL.BOXINST.PAIRWISE.DILATION
         self.pairwise_color_thresh = cfg.MODEL.BOXINST.PAIRWISE.COLOR_THRESH
         self._warmup_iters = cfg.MODEL.BOXINST.PAIRWISE.WARMUP_ITERS
-        self.track_enabled = cfg.MODEL.PX_VOLUME.ENABLED
-        self.loss_p3_mask_on = cfg.MODEL.PX_VOLUME.LOSS_P3_MASK_ON
+        self.use_p3_mask = cfg.MODEL.PX_VOLUME.ENABLED and cfg.MODEL.PX_VOLUME.USE_P3_MASK
 
         weight_nums, bias_nums = [], []
         for l in range(self.num_layers):
@@ -193,9 +192,9 @@ class DynamicMaskHead(nn.Module):
 
         mask_logits = mask_logits.reshape(-1, 1, H, W)
 
-        if self.track_enabled:
+        if self.use_p3_mask:
             mask_p3 = mask_logits.sigmoid()  # (N, 1, H, W)
-            if self.training and self.loss_p3_mask_on:
+            if self.training:
                 instances.pred_p3_masks = mask_p3
             else:
                 instances.pred_p3_masks = mask_p3[:, 0]  # (N, H, W)
@@ -218,7 +217,7 @@ class DynamicMaskHead(nn.Module):
                 else:
                     losses["loss_prj"] = dummy_loss
                     losses["loss_pairwise"] = dummy_loss
-                if self.loss_p3_mask_on:
+                if self.use_p3_mask:
                     losses["loss_mask_p3"] = dummy_loss
             else:
                 gt_inds = pred_instances.gt_inds
