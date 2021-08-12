@@ -13,8 +13,12 @@ _C.INPUT.CROP.CROP_INSTANCE = True
 
 # Optimizer type.
 _C.SOLVER.OPTIMIZER = "SGD"
-# Mask format
-_C.INPUT.MASK_FORMAT = "polygon"
+# Input resize mode.
+# - "short_edge" (default): scale the shorter edge to the size given by INPUT.MIN_SIZE_(TRAIN/TEST)
+# - "fixed": scale the input image to the size given by INPUT.FIXED_SIZES_(TRAIN/TEST)
+_C.INPUT.RESIZE_MODE = "short_edge"
+_C.INPUT.FIXED_SIZES_TRAIN = ((544, 960),)
+_C.INPUT.FIXED_SIZES_TEST = ((544, 960),)
 
 # ---------------------------------------------------------------------------- #
 # FCOS Head

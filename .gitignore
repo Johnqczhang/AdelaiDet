@@ -43,6 +43,7 @@ dist/
 /datasets/pic
 /datasets/ytvos
 /datasets/mots
+/datasets/kitti
 /models
 /demo_outputs
 /example_inputs

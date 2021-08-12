@@ -32,19 +32,27 @@ metadata_text = {
 }
 
 _PREDEFINED_SPLITS_MOTS = {
-    "mots_train": ("mots/train", "mots/annotations/train.json"),
-    "mots_train-02": ("mots/train", "mots/annotations/train-02.json"),
-    "mots_val-02": ("mots/train", "mots/annotations/val-02.json"),
-    "mots_train-05": ("mots/train", "mots/annotations/train-05.json"),
-    "mots_val-05": ("mots/train", "mots/annotations/val-05.json"),
-    "mots_train-09": ("mots/train", "mots/annotations/train-09.json"),
-    "mots_val-09": ("mots/train", "mots/annotations/val-09.json"),
-    "mots_train-11": ("mots/train", "mots/annotations/train-11.json"),
-    "mots_val-11": ("mots/train", "mots/annotations/val-11.json"),
+    "mots_train": ("mots/train", "mots/annotations/mots_train.json"),
+    "mots_train_02": ("mots/train", "mots/annotations/mots_train_02.json"),
+    "mots_val_02": ("mots/train", "mots/annotations/mots_val_02.json"),
+    "mots_train_05": ("mots/train", "mots/annotations/mots_train_05.json"),
+    "mots_val_05": ("mots/train", "mots/annotations/mots_val_05.json"),
+    "mots_train_09": ("mots/train", "mots/annotations/mots_train_09.json"),
+    "mots_val_09": ("mots/train", "mots/annotations/mots_val_09.json"),
+    "mots_train_11": ("mots/train", "mots/annotations/mots_train_11.json"),
+    "mots_val_11": ("mots/train", "mots/annotations/mots_val_11.json"),
+    "kitti_mots_train": ("kitti/training", "mots/annotations/kitti_mots_train.json"),
+    "kitti_mots_val": ("kitti/training", "mots/annotations/kitti_mots_val.json"),
+    "kitti_mots_train_full": ("kitti/training", "mots/annotations/kitti_mots_train_full.json"),
 }
 
 metadata_mots = {
     "thing_classes": ["pedestrian"]
+}
+
+metadata_kitti_mots = {
+    # add "bicycle" only to keep the same category index with COCO
+    "thing_classes": ["pedestrian", "bicycle", "car"],
 }
 
 
@@ -69,7 +77,7 @@ def register_all_coco(root="datasets"):
         # Assume pre-defined datasets live in `./datasets`.
         register_mots_instances(
             key,
-            metadata_mots,
+            metadata_kitti_mots if "kitti" in key else metadata_mots,
             os.path.join(root, json_file) if "://" not in json_file else json_file,
             os.path.join(root, image_root),
         )

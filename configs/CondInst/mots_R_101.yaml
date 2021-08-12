@@ -3,24 +3,27 @@ MODEL:
   WEIGHTS: "models/CondInst_MS_R_101_3x.pth"
   RESNETS:
     DEPTH: 101
+  CONDINST:
+    MAX_PROPOSALS: 500  # use 500 if SOLVER.IMS_PER_BATCH = 32
 OUTPUT_DIR: "train_dir/CondInst_mots_R_101_1x"
 INPUT:
+  RESIZE_MODE: "fixed"
+  # FIXED_SIZES_TRAIN: ((544, 960), (576, 1024), (608, 1088), (640, 1152), (672, 1218), (704, 1282))
+  FIXED_SIZES_TRAIN: ((608, 1088),)
+  FIXED_SIZES_TEST: ((608, 1088),)
   MASK_FORMAT: "bitmask"
 DATASETS:
-  TRAIN: ("mots_train-09",)
-  TEST: ("mots_val-09",)
+  TRAIN: ("mots_train_05",)
+  TEST: ("mots_val_05",)
   # TRAIN: ("mots_train",)
   # TEST: ()
+DATALOADER:
+  NUM_WORKERS: 4
 SOLVER:
-  # OPTIMIZER: "Adam"  # default: SGD
+  OPTIMIZER: "Adam"  # default: SGD
   IMS_PER_BATCH: 16
-  BASE_LR: 5e-7
-  # # 1x, train, ~358 iters/epoch
-  # STEPS: (2864, 3819)  # epochs: (8, ~11)
-  # MAX_ITER: 4296  # 12 epochs
-  # 1x, train-09, ~293 iters/epoch
-  STEPS: (2344, 3125)
-  MAX_ITER: 3516
-  # # 3x, train-09
-  # STEPS: (8204, 9767)
-  # MAX_ITER: 10548
+  BASE_LR: 1e-4
+  WARMUP_ITERS: 0
+  # scheduler, 1x
+  STEPS: (6000,)
+  MAX_ITER: 9000

@@ -22,7 +22,7 @@ import torch
 # from torch.nn.parallel import DistributedDataParallel
 
 import detectron2.utils.comm as comm
-from detectron2.data import MetadataCatalog, build_detection_train_loader
+from detectron2.data import MetadataCatalog, build_detection_train_loader, build_detection_test_loader
 from detectron2.engine import DefaultTrainer, default_argument_parser, default_setup, hooks, launch
 from detectron2.utils.events import EventStorage
 from detectron2.evaluation import (
@@ -122,6 +122,14 @@ class Trainer(DefaultTrainer):
         else:
             mapper = DatasetMapperWithBasis(cfg, True)
             return build_detection_train_loader(cfg, mapper=mapper)
+
+    @classmethod
+    def build_test_loader(cls, cfg, dataset_name):
+        if cfg.INPUT.RESIZE_MODE == "fixed":
+            mapper = DatasetMapperWithBasis(cfg, False)
+            return build_detection_test_loader(cfg, dataset_name, mapper=mapper)
+        else:
+            return super().build_test_loader(cfg, dataset_name)
 
     @classmethod
     def build_evaluator(cls, cfg, dataset_name, output_folder=None):

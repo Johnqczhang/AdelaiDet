@@ -1,10 +1,11 @@
 import random
+from detectron2.data.transforms.augmentation import Augmentation
 
 import numpy as np
 from fvcore.transforms import transform as T
 
 from typing import List, Optional
-from detectron2.data.transforms import RandomCrop, StandardAugInput
+from detectron2.data.transforms import RandomCrop, ResizeTransform, StandardAugInput
 # from detectron2.structures import BoxMode
 
 
@@ -108,6 +109,60 @@ class RandomCropWithInstance(RandomCrop):
             crop_size, image_size, boxes, crop_box=self.crop_instance
         )
 
+
+class RandomPaddedResize(Augmentation):
+    """ Resize image to a fixed target size with padding around borders """
+
+    def __init__(self, shapes) -> None:
+        """
+        Args:
+            shapes (list[(int, int)]): A list of target sizes (h, w) to sample from.
+        """
+        super().__init__()
+        assert all(len(shape) == 2 for shape in shapes), (
+            "shapes must be a list of tuples of two values"
+            f" Got {shapes}."
+        )
+        self._init(locals())
+
+    def get_transform(self, image) -> T.TransformList:
+        h, w = image.shape[:2]
+        shape = np.random.permutation(self.shapes)[0]
+        ratio = min(shape[0] / float(h), shape[1] / float(w))
+        newh, neww = round(ratio * h), round(ratio * w)
+
+        tfms = []
+        tfms.append(ResizeTransform(h, w, newh, neww))
+
+        padh = (shape[0] - newh) / 2  # height padding
+        padw = (shape[1] - neww) / 2  # width padding
+        if padh > 0 or padw > 0:
+            t, b = round(padh - 0.1), round(padh + 0.1)
+            l, r = round(padw - 0.1), round(padw + 0.1)
+            tfms.append(PadTransform(l, t, r, b, neww, newh, pad_value=127.5))
+
+        return T.TransformList(tfms)
+
+
+class PadTransform(T.PadTransform):
+    def apply_image(self, img, pad_value=None):
+        if pad_value is None:
+            pad_value = self.pad_value
+
+        if img.ndim == 3:
+            padding = ((self.y0, self.y1), (self.x0, self.x1), (0, 0))
+        else:
+            padding = ((self.y0, self.y1), (self.x0, self.x1))
+        return np.pad(
+            img,
+            padding,
+            mode="constant",
+            constant_values=pad_value,
+        )
+
+    def apply_segmentation(self, segmentation):
+        return self.apply_image(segmentation, pad_value=0.)
+ 
 
 class AugInputList(StandardAugInput):
     def __init__(self, images: List[np.ndarray]) -> None:

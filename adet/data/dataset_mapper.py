@@ -20,7 +20,7 @@ from detectron2.data.dataset_mapper import DatasetMapper
 from detectron2.data.detection_utils import SizeMismatchError
 from detectron2.structures import BoxMode
 
-from .augmentation import RandomCropWithInstance, AugInputList
+from .augmentation import RandomCropWithInstance, AugInputList, PadTransform
 from .detection_utils import (annotations_to_instances, build_augmentation,
                               transform_instance_annotations)
 
@@ -188,6 +188,10 @@ class DatasetMapperWithBasis(DatasetMapper):
             dataset_dict.pop("annotations", None)
             dataset_dict.pop("sem_seg_file_name", None)
             dataset_dict.pop("pano_seg_file_name", None)
+            tfm = [t for t in transforms if isinstance(t, PadTransform)]
+            if len(tfm) == 1:
+                tfm = tfm[0]
+                dataset_dict["pad_ltrb"] = [tfm.x0, tfm.y0, tfm.x1, tfm.y1]
             return dataset_dict
 
         if "annotations" in dataset_dict:

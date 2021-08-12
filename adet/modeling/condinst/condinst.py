@@ -188,10 +188,17 @@ class CondInst(nn.Module):
 
                 instances_per_im = pred_instances_w_masks[pred_instances_w_masks.im_inds == im_id]
 
-                instances_per_im = self.postprocess(
-                    instances_per_im, height, width,
-                    padded_im_h, padded_im_w
-                )
+                pad_ltrb = input_per_image.get("pad_ltrb", None)
+                if pad_ltrb is not None:
+                    instances_per_im = self.unpad_postprocess(
+                        instances_per_im, pad_ltrb, height, width,
+                    )
+                else:
+                    instances_per_im = self.postprocess(
+                        instances_per_im, height, width,
+                        padded_im_h, padded_im_w
+                    )
+
                 if self.corr_block:
                     instances_per_im = self.corr_block.postprocess(
                         mask_feats[im_id], self.mask_branch.out_stride, instances_per_im
@@ -356,6 +363,57 @@ class CondInst(nn.Module):
             per_im_gt_inst.image_color_similarity = torch.cat([
                 images_color_similarity for _ in range(len(per_im_gt_inst))
             ], dim=0)
+
+    def unpad_postprocess(self, results, pad_ltrb, output_h, output_w, mask_threshold=0.5):
+        """
+        Resize the output instances.
+        The input images are resized and padded around borders when being fed into the detector.
+        As a result, we need crop the outputs of the detector and resize to the desired output resolution.
+
+        Args:
+            results (Instances): the raw outputs from the detector.
+                `results.image_size` contains the input image resolution the detector sees.
+                This object might be modified in-place.
+            pad_ltrb ([x0, y0, x1, y1]): number of padded pixels at left, top, right, bottom borders.
+            output_h, output_w: the desired output resolution.
+
+        Returns:
+            Instances: the resized output from the model, based on the output resolution
+        """
+        ph, pw = results.image_size[0], results.image_size[1]
+        x0, y0, x1, y1 = pad_ltrb
+        rh, rw = ph - y0 - y1, pw - x0 - x1
+        scale_x, scale_y = output_w / rw, output_h / rh
+        results = Instances((output_h, output_w), **results.get_fields())
+
+        output_boxes = results.pred_boxes
+        output_boxes.tensor[:, 0::2] -= x0
+        output_boxes.tensor[:, 1::2] -= y0
+        output_boxes.scale(scale_x, scale_y)        
+        output_boxes.clip(results.image_size)
+
+        results = results[output_boxes.nonempty()]
+
+        if results.has("pred_global_masks"):
+            mask_h, mask_w = results.pred_global_masks.size()[-2:]
+            factor_h = ph // mask_h
+            assert factor_h == pw // mask_w
+            pred_global_masks = aligned_bilinear(
+                results.pred_global_masks, factor_h
+            )
+            if self.corr_block:
+                results.pred_global_masks = (pred_global_masks[:, 0] > mask_threshold).float()
+
+            pred_global_masks = pred_global_masks[..., y0 : y0 + rh, x0 : x0 + rw]
+            pred_global_masks = F.interpolate(
+                pred_global_masks,
+                size=(output_h, output_w),
+                mode="bilinear", align_corners=False
+            )
+            pred_global_masks = pred_global_masks[:, 0]
+            results.pred_masks = (pred_global_masks > mask_threshold).float()
+
+        return results
 
     def postprocess(self, results, output_height, output_width, padded_im_h, padded_im_w, mask_threshold=0.5):
         """

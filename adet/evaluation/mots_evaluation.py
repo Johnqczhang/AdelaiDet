@@ -3,6 +3,13 @@ from detectron2.evaluation.coco_evaluation import instances_to_coco_json
 
 
 class MOTSEvaluator(COCOEvaluator):
+    def __init__(self, dataset_name, cfg, distributed, output_dir):
+        super().__init__(dataset_name, cfg, distributed, output_dir)
+        if "kitti" in dataset_name:
+            self.cat_ids = [0, 2]
+        else:
+            self.cat_ids = [0]
+
     def process(self, inputs, outputs):
         """
         Args:
@@ -17,7 +24,8 @@ class MOTSEvaluator(COCOEvaluator):
 
             if "instances" in output:
                 instances = output["instances"].to(self._cpu_device)
-                instances = instances[instances.pred_classes == 0]
+                inds = sum([instances.pred_classes == cid for cid in self.cat_ids]) > 0
+                instances = instances[inds]
                 prediction["instances"] = instances_to_coco_json(instances, input["image_id"])
             if "proposals" in output:
                 prediction["proposals"] = output["proposals"].to(self._cpu_device)
