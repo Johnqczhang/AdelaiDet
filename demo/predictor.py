@@ -14,7 +14,26 @@ from detectron2.utils.video_visualizer import VideoVisualizer
 from detectron2.utils.visualizer import ColorMode, Visualizer
 from detectron2.utils.colormap import random_color
 
+from fvcore.transforms import transform as T
+
 from adet.utils.visualizer import TextVisualizer
+from adet.data.detection_utils import build_fixed_sizes_augmentation
+
+
+def multi_class_tracking(instances, trackers, frame_id):
+    inds_ped = (instances.pred_classes == 0).nonzero().squeeze(-1)
+    inds_car = (instances.pred_classes == 2).nonzero().squeeze(-1)
+
+    ped_ids = trackers["ped"].track(frame_id, instances[inds_ped])
+    ped_ids += 2000
+    car_ids = trackers["car"].track(frame_id, instances[inds_car])
+    car_ids += 1000
+
+    inds = torch.cat([inds_ped, inds_car], dim=0)
+    instances = instances[inds]
+    instances.track_ids = torch.cat([ped_ids, car_ids], dim=0)
+
+    return instances
 
 
 class VisualizationDemo(object):
@@ -38,7 +57,7 @@ class VisualizationDemo(object):
             num_gpu = torch.cuda.device_count()
             self.predictor = AsyncPredictor(cfg, num_gpus=num_gpu)
         else:
-            self.predictor = DefaultPredictor(cfg)
+            self.predictor = MOTSPredictor(cfg)
 
     def run_on_image(self, image):
         """
@@ -76,17 +95,25 @@ class VisualizationDemo(object):
 
         return predictions, vis_output
 
-    def run_on_image_with_tracker(self, image, tracker, frame_id):
+    def run_on_image_with_tracker(self, image, tracker, frame_id, vis_on=False):
         predictions = self.predictor(image)
         # Convert image from OpenCV BGR format to Matplotlib RGB format.
         image = image[:, :, ::-1]
-        visualizer = TrackVisualizer(image, self.metadata, instance_mode=self.instance_mode)
         instances = predictions["instances"].to(self.cpu_device)
-        instances = instances[instances.pred_classes == 0]
-        track_ids = tracker.track(frame_id, instances).numpy()
-        visualizer.track_ids = track_ids
-        vis_output = visualizer.draw_instance_predictions(predictions=instances)
-        return instances, vis_output, track_ids
+
+        if isinstance(tracker, dict):
+            instances = multi_class_tracking(instances, tracker, frame_id)
+        else:
+            instances = instances[instances.pred_classes == 0]
+            instances.track_ids = tracker.track(frame_id, instances)
+
+        vis_output = None
+        if vis_on:
+            visualizer = MOTSVisualizer(image, self.metadata, instance_mode=self.instance_mode)
+            visualizer.track_ids = instances.track_ids
+            vis_output = visualizer.draw_instance_predictions(predictions=instances)
+
+        return instances, vis_output
 
     def _frame_from_video(self, video):
         while video.isOpened():
@@ -260,10 +287,40 @@ class AsyncPredictor:
         return len(self.procs) * 5
 
 
+class MOTSPredictor(DefaultPredictor):
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        if cfg.INPUT.RESIZE_MODE == "fixed":
+            print(
+                "Rebuilding the augmentations. The previous augmentations will be overridden."
+            )
+            self.aug = build_fixed_sizes_augmentation(cfg, is_train=False)[0]
+
+    def __call__(self, original_image):
+        with torch.no_grad():  # https://github.com/sphinx-doc/sphinx/issues/4258
+            # Apply pre-processing to image.
+            if self.input_format == "RGB":
+                # whether the model expects BGR inputs or RGB
+                original_image = original_image[:, :, ::-1]
+            height, width = original_image.shape[:2]
+            transforms = self.aug.get_transform(original_image)
+            image = transforms.apply_image(original_image)
+            image = torch.as_tensor(image.astype("float32").transpose(2, 0, 1))
+
+            inputs = {"image": image, "height": height, "width": width}
+            if self.cfg.INPUT.RESIZE_MODE == "fixed":
+                assert isinstance(transforms, T.TransformList)
+                if len(transforms) > 1:
+                    tfm = transforms[1]
+                    inputs["pad_ltrb"] = [tfm.x0, tfm.y0, tfm.x1, tfm.y1]
+
+            predictions = self.model([inputs])[0]
+            return predictions
+
 
 _SMALL_OBJECT_AREA_THRESH = 1000
 
-class TrackVisualizer(Visualizer):
+class MOTSVisualizer(Visualizer):
     def overlay_instances(
         self,
         *,
@@ -362,10 +419,9 @@ class TrackVisualizer(Visualizer):
                     * 0.5
                     * self._default_font_size
                 )
-                score = labels[i].split(' ')[1]
-                label = f"pedestrian-{track_id} {score}"
+                label, score = labels[i].split(' ')
                 self.draw_text(
-                    label,
+                    f"{label}-{track_id} {score}",
                     text_pos,
                     color=lighter_color,
                     horizontal_alignment=horiz_align,

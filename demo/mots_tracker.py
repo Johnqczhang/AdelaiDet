@@ -19,9 +19,35 @@ def mask2rles(masks):
     return rles
 
 
+def xyxy2xyah(boxes):
+    """ Convert bounding boxes from xyxy to xyah.
+
+    Args:
+        boxes (Tensor[float]): a Nx4 matrix. Each row is (x1, y1, x2, y2).
+    """
+    center = (boxes[:, 0:2] + boxes[:, 2:4]) / 2
+    ah = boxes[:, 2:4] - boxes[:, 0:2]
+    ah[:, 0] = ah[:, 0] / ah[:, 1]
+    xyah = torch.stack([center, ah], dim=1)
+    return xyah
+
+
 @TRACKERS.register_module()
-class MaskTracker(BaseTracker):
-    def __init__(self, track_metric="miou", match_thr=0.7, **kwargs):
+class MOTSTracker(BaseTracker):
+    """ A simple tracker for MOTS.
+    The detections and segmentations of all instances in each frame are predicted by a CondInst model.
+
+    Args:
+        track_metric (str, optional): the metric used for association. Default: 'miou', i.e., mask IoU.
+        match_thr (float, optional): Threshold for whether accept a match. Defaults to 0.5.
+    """
+
+    def __init__(
+        self,
+        track_metric="miou",
+        match_thr=0.7,
+        **kwargs
+    ):
         super().__init__(**kwargs)
         self.track_metric = track_metric
         self.match_thr = match_thr
@@ -72,9 +98,9 @@ class MaskTracker(BaseTracker):
         else:
             ids = torch.full((num_inst,), -1, dtype=torch.long)
             track_ids = [
-                id for id in self.ids if id not in ids
-                and self.tracks[id].frame_ids[-1] == frame_id - 1
-                # and self.tracks[id].frame_ids[-1] >= frame_id - self.num_frames_retain
+                id for id, track in self.tracks.items()
+                if id not in ids and track.frame_ids[-1] == frame_id - 1
+                # and track.frame_ids[-1] >= frame_id - self.num_frames_retain
             ]
             if len(track_ids) > 0:
                 if self.track_metric == "miou":
@@ -99,35 +125,49 @@ class MaskTracker(BaseTracker):
         return ids + 1
 
 
-def parse_mots_results(img, frame_id, instances, track_ids):
+COCO_CAT_ID_TO_MOTS = {
+    0: 2,  # pedestrian
+    2: 1,  # car
+}
+
+def parse_mots_results(frame_id, instances):
+    """ Extract txt-format results from predictions for MOTS evaluation. """
     mots_results = []
     if len(instances) == 0:
         return mots_results
 
-    img_h, img_w = img.shape[:2]
-    rles = remove_mask_overlap(instances)
-    cls_id = 2
+    # sort instances according to predicted class score in descending order
+    inds = instances.scores.argsort(descending=True)
+    instances = instances[inds]
+    rles = mask2rles(remove_mask_overlap(instances.pred_masks))
+    track_ids = instances.track_ids.numpy()
+    cls_ids = instances.pred_classes.numpy()
+    img_h, img_w = instances.image_size
 
-    for track_id, rle in zip(track_ids, rles):
-        obj_id = 2000 + track_id
-        mots_results.append(f"{frame_id} {obj_id} {cls_id} {img_h} {img_w} {rle['counts']}\n")
+    for t_id, c_id, rle in zip(track_ids, cls_ids, rles):
+        cat_id = COCO_CAT_ID_TO_MOTS[c_id]
+        mots_results.append(f"{frame_id} {t_id} {cat_id} {img_h} {img_w} {rle['counts']}\n")
 
     return mots_results
 
 
-def remove_mask_overlap(instances):
-    scores = instances.scores.numpy()
-    sorted_idxs = np.argsort(-scores).tolist()
-    masks = [instances.pred_masks[idx] for idx in sorted_idxs]
-    mask_unfill = torch.zeros_like(masks[0])
-    masks_wo_overlap = []
+def remove_mask_overlap(masks):
+    """ Get non-overlapping masks where each pixel can be assigned to at most one object.
 
-    for mask in masks:
-        new_mask = torch.zeros_like(mask)
+    Args:
+        masks (Tensor): NxHxW, binary segmentation masks for N instances.
+
+    Returns:
+        new_masks (List[Tensor]): a list of instance masks which are non-overlapping.
+    """
+    empty_masks = torch.zeros_like(masks)
+    mask_unfill = torch.zeros_like(masks[0])
+    new_masks = []
+
+    for mask, empty_mask in zip(masks, empty_masks):
         pos = (mask_unfill == 0) & (mask == 1)
         mask_unfill[pos] = 1
-        new_mask[pos] = 1
-        masks_wo_overlap.append(new_mask)
+        empty_mask[pos] = 1
+        new_masks.append(empty_mask)
 
-    rles = mask2rles(masks_wo_overlap)
-    return rles
+    return new_masks
