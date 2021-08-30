@@ -131,7 +131,8 @@ class DynamicMaskHead(nn.Module):
         self.bias_nums = bias_nums
         self.num_gen_params = sum(weight_nums) + sum(bias_nums)
 
-        self.register_buffer("_iter", torch.zeros([1]))
+        if self.boxinst_enabled:
+            self.register_buffer("_iter", torch.zeros([1]))
 
     def mask_heads_forward(self, features, weights, biases, num_insts):
         '''
@@ -207,7 +208,6 @@ class DynamicMaskHead(nn.Module):
 
     def __call__(self, mask_feats, mask_feat_stride, pred_instances, gt_instances=None):
         if self.training:
-            self._iter += 1
             losses = {}
 
             if len(pred_instances) == 0:
@@ -230,6 +230,7 @@ class DynamicMaskHead(nn.Module):
                 mask_scores = mask_logits.sigmoid()
 
                 if self.boxinst_enabled:
+                    self._iter += 1
                     # box-supervised BoxInst losses
                     image_color_similarity = torch.cat([x.image_color_similarity for x in gt_instances])
                     image_color_similarity = image_color_similarity[gt_inds].to(dtype=mask_feats.dtype)
