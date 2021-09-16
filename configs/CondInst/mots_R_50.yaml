@@ -3,6 +3,8 @@ MODEL:
   WEIGHTS: "models/CondInst_MS_R_50_3x.pth"
   RESNETS:
     DEPTH: 50
+  FCOS:
+    NUM_CLASSES: 1
   CONDINST:
     MAX_PROPOSALS: 500  # use 500 if SOLVER.IMS_PER_BATCH = 32
 OUTPUT_DIR: "train_dir/CondInst_mots_R_50_1x"

@@ -1,7 +1,6 @@
 import os
 
 from detectron2.data.datasets.register_coco import register_coco_instances
-# from detectron2.data.datasets.builtin_meta import _get_builtin_metadata
 
 from .datasets.text import register_text_instances
 from .datasets.mots import register_mots_instances
@@ -51,8 +50,7 @@ metadata_mots = {
 }
 
 metadata_kitti_mots = {
-    # add "bicycle" only to keep the same category index with COCO
-    "thing_classes": ["pedestrian", "bicycle", "car"],
+    "thing_classes": ["pedestrian", "car"],
 }
 
 

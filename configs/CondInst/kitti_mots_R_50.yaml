@@ -3,6 +3,8 @@ MODEL:
   WEIGHTS: "models/CondInst_MS_R_50_3x.pth"
   RESNETS:
     DEPTH: 50
+  FCOS:
+    NUM_CLASSES: 2
   CONDINST:
     MAX_PROPOSALS: 1000
 OUTPUT_DIR: "train_dir/kitti/mots_R50_1x"
