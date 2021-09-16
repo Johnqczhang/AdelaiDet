@@ -1,12 +1,17 @@
 import random
 from detectron2.data.transforms.augmentation import Augmentation
 
+import cv2
 import numpy as np
 from fvcore.transforms import transform as T
 
-from typing import List, Optional
-from detectron2.data.transforms import RandomCrop, ResizeTransform, StandardAugInput
-# from detectron2.structures import BoxMode
+from typing import List
+from detectron2.data.transforms import (
+    RandomCrop,
+    ResizeTransform,
+    ColorTransform,
+    StandardAugInput
+)
 
 
 def gen_crop_transform_with_instance(crop_size, image_size, instances, crop_box=True):
@@ -162,7 +167,45 @@ class PadTransform(T.PadTransform):
 
     def apply_segmentation(self, segmentation):
         return self.apply_image(segmentation, pad_value=0.)
- 
+
+
+class RandomColorJitterHSV(Augmentation):
+    """
+    Randomly change the hue, saturation, and brightness of an RGB image.
+    The input image is assumed to have 'BGR' channel order.
+    """
+
+    def __init__(self, hsv_factor=[0., 0., 0.], prob=0.5) -> None:
+        """
+        Args:
+            hsv_factor (list[float]): HSV factor in the range of [0, 1).
+        """
+        super().__init__()
+        if isinstance(hsv_factor, list):
+            hsv_factor = np.array(hsv_factor, dtype=np.float32)
+        self._init(locals())
+
+    def get_transform(self, image) -> T.Transform:
+        assert image.shape[-1] == 3, "RandomSaturation only works on RGB images"
+        do = self._rand_range() < self.prob
+        if do:
+            hsv_factor = self._rand_range(-self.hsv_factor, self.hsv_factor, 3) + 1
+            return JitterHSVTransform(hsv_factor)
+        else:
+            return T.NoOpTransform()
+
+
+class JitterHSVTransform(ColorTransform):
+    def __init__(self, hsv_factor) -> None:
+        super(ColorTransform, self).__init__()
+        self._set_attributes(locals())
+
+    def apply_image(self, img):
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV).astype(np.float32)
+        img = np.clip(img * self.hsv_factor, 0, 255).astype(np.uint8)
+        img = cv2.cvtColor(img, cv2.COLOR_HSV2BGR)
+        return img
+
 
 class AugInputList(StandardAugInput):
     def __init__(self, images: List[np.ndarray]) -> None:

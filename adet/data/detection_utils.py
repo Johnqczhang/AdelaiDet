@@ -8,7 +8,7 @@ from detectron2.data.detection_utils import \
     annotations_to_instances as d2_anno_to_inst
 from detectron2.data.detection_utils import \
     transform_instance_annotations as d2_transform_inst_anno
-from .augmentation import RandomPaddedResize
+from .augmentation import RandomPaddedResize, RandomColorJitterHSV
 
 
 def transform_instance_annotations(
@@ -68,31 +68,6 @@ def annotations_to_instances(annos, image_size, mask_format="polygon"):
     return instance
 
 
-def build_fixed_sizes_augmentation(cfg, is_train):
-    resize_mode = cfg.INPUT.RESIZE_MODE
-    assert resize_mode == "fixed", (
-        "cfg.INPUT.RESIZE_MODE must be 'fixed'"
-        f" Got {resize_mode}!"
-    )
-
-    if is_train:
-        sizes = cfg.INPUT.FIXED_SIZES_TRAIN
-    else:
-        sizes = cfg.INPUT.FIXED_SIZES_TEST
-
-    augmentation = [
-        RandomPaddedResize(sizes)
-    ]
-    if is_train:
-        if cfg.INPUT.HFLIP_TRAIN:
-            augmentation.append(T.RandomFlip())
-
-    logger = logging.getLogger(__name__)
-    logger.info(f"Augmentations used in {'training' if is_train else 'testing'}: {str(augmentation)}")
-
-    return augmentation
-
-
 def build_augmentation(cfg, is_train):
     """
     With option to don't use hflip
@@ -100,30 +75,38 @@ def build_augmentation(cfg, is_train):
     Returns:
         list[Augmentation]
     """
-    if cfg.INPUT.RESIZE_MODE == "fixed":
-        return build_fixed_sizes_augmentation(cfg, is_train)
-
-    if is_train:
-        min_size = cfg.INPUT.MIN_SIZE_TRAIN
-        max_size = cfg.INPUT.MAX_SIZE_TRAIN
-        sample_style = cfg.INPUT.MIN_SIZE_TRAIN_SAMPLING
-    else:
-        min_size = cfg.INPUT.MIN_SIZE_TEST
-        max_size = cfg.INPUT.MAX_SIZE_TEST
-        sample_style = "choice"
-    if sample_style == "range":
-        assert (
-            len(min_size) == 2
-        ), "more than 2 ({}) min_size(s) are provided for ranges".format(len(min_size))
-
-    logger = logging.getLogger(__name__)
-
     augmentation = []
-    augmentation.append(T.ResizeShortestEdge(min_size, max_size, sample_style))
+
+    if cfg.INPUT.RESIZE_MODE == "fixed":
+        if is_train:
+            sizes = cfg.INPUT.FIXED_SIZES_TRAIN
+        else:
+            sizes = cfg.INPUT.FIXED_SIZES_TEST
+        augmentation.append(RandomPaddedResize(sizes))
+    else:
+        if is_train:
+            min_size = cfg.INPUT.MIN_SIZE_TRAIN
+            max_size = cfg.INPUT.MAX_SIZE_TRAIN
+            sample_style = cfg.INPUT.MIN_SIZE_TRAIN_SAMPLING
+        else:
+            min_size = cfg.INPUT.MIN_SIZE_TEST
+            max_size = cfg.INPUT.MAX_SIZE_TEST
+            sample_style = "choice"
+        if sample_style == "range":
+            assert (
+                len(min_size) == 2
+            ), "more than 2 ({}) min_size(s) are provided for ranges".format(len(min_size))
+        augmentation.append(T.ResizeShortestEdge(min_size, max_size, sample_style))
+
     if is_train:
+        if cfg.INPUT.AUGMENT_HSV:
+            hsv_factor = cfg.INPUT.AUGMENT_HSV_FACTOR
+            augmentation.insert(0, RandomColorJitterHSV(hsv_factor))
         if cfg.INPUT.HFLIP_TRAIN:
             augmentation.append(T.RandomFlip())
-        logger.info("Augmentations used in training: " + str(augmentation))
+
+    logger = logging.getLogger(__name__)
+    logger.info(f"Augmentations used in {'training' if is_train else 'testing'}: {str(augmentation)}")
     return augmentation
 
 

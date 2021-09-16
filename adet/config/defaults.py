@@ -19,6 +19,10 @@ _C.SOLVER.OPTIMIZER = "SGD"
 _C.INPUT.RESIZE_MODE = "short_edge"
 _C.INPUT.FIXED_SIZES_TRAIN = ((544, 960),)
 _C.INPUT.FIXED_SIZES_TEST = ((544, 960),)
+# Whether to use color jittering in HSV color space to augment training images.
+_C.INPUT.AUGMENT_HSV = False
+# How much to jitter hue, saturation, and brightness by respective factors in the range of [0, 1)
+_C.INPUT.AUGMENT_HSV_FACTOR = [0., 0., 0.]
 
 # ---------------------------------------------------------------------------- #
 # FCOS Head
