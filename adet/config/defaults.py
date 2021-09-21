@@ -122,6 +122,9 @@ _C.MODEL.BATEXT.NUM_CONV = 2
 _C.MODEL.BATEXT.RECOGNITION_LOSS = "ctc"
 _C.MODEL.BATEXT.RECOGNIZER = "attn"
 _C.MODEL.BATEXT.CANONICAL_SIZE = 96  # largest min_size for level 3 (stride=8)
+_C.MODEL.BATEXT.USE_COORDCONV = False
+_C.MODEL.BATEXT.USE_AET = False
+_C.MODEL.BATEXT.CUSTOM_DICT = "" # Path to the class file.
 
 # ---------------------------------------------------------------------------- #
 # BlendMask Options
