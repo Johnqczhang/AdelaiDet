@@ -17,7 +17,7 @@ from detectron2.utils.colormap import random_color
 from fvcore.transforms import transform as T
 
 from adet.utils.visualizer import TextVisualizer
-from adet.data.detection_utils import build_fixed_sizes_augmentation
+from adet.data.detection_utils import build_augmentation
 
 
 def multi_class_tracking(instances, trackers, frame_id):
@@ -100,7 +100,7 @@ class VisualizationDemo(object):
         predictions = self.predictor(image)
         # Convert image from OpenCV BGR format to Matplotlib RGB format.
         image = image[:, :, ::-1]
-        instances = predictions["instances"].to(self.cpu_device)
+        instances = predictions["instances"]
 
         if isinstance(tracker, dict):
             instances = multi_class_tracking(instances, tracker, frame_id)
@@ -108,6 +108,7 @@ class VisualizationDemo(object):
             instances = instances[instances.pred_classes == 0]
             instances.track_ids = tracker.track(frame_id, instances)
 
+        instances = instances.to(self.cpu_device)
         vis_output = None
         if vis_on:
             visualizer = MOTSVisualizer(image, self.metadata, instance_mode=self.instance_mode)
@@ -295,7 +296,7 @@ class MOTSPredictor(DefaultPredictor):
             print(
                 "Rebuilding the augmentations. The previous augmentations will be overridden."
             )
-            self.aug = build_fixed_sizes_augmentation(cfg, is_train=False)[0]
+            self.aug = build_augmentation(cfg, is_train=False)[0]
 
     def __call__(self, original_image):
         with torch.no_grad():  # https://github.com/sphinx-doc/sphinx/issues/4258
