@@ -167,9 +167,9 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
     dataset_dicts = []
 
     img_keys = [
-        "height", "width", "frame_id", "video_id", "num_frames"
+        "height", "width", "frame_id", "seq_id", "num_frames"
     ]
-    ann_keys = ["iscrowd", "bbox", "inst_id", "area", "category_id"] + (extra_annotation_keys or [])
+    ann_keys = ["iscrowd", "bbox", "obj_id", "area", "category_id"] + (extra_annotation_keys or [])
 
     num_instances_without_valid_segmentation = 0
 

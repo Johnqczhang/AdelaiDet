@@ -31,18 +31,18 @@ metadata_text = {
 }
 
 _PREDEFINED_SPLITS_MOTS = {
-    "mots_train": ("mots/train", "mots/annotations/mots_train.json"),
-    "mots_train_02": ("mots/train", "mots/annotations/mots_train_02.json"),
-    "mots_val_02": ("mots/train", "mots/annotations/mots_val_02.json"),
-    "mots_train_05": ("mots/train", "mots/annotations/mots_train_05.json"),
-    "mots_val_05": ("mots/train", "mots/annotations/mots_val_05.json"),
-    "mots_train_09": ("mots/train", "mots/annotations/mots_train_09.json"),
-    "mots_val_09": ("mots/train", "mots/annotations/mots_val_09.json"),
-    "mots_train_11": ("mots/train", "mots/annotations/mots_train_11.json"),
-    "mots_val_11": ("mots/train", "mots/annotations/mots_val_11.json"),
-    "kitti_mots_train": ("kitti/training", "mots/annotations/kitti_mots_train.json"),
-    "kitti_mots_val": ("kitti/training", "mots/annotations/kitti_mots_val.json"),
-    "kitti_mots_train_full": ("kitti/training", "mots/annotations/kitti_mots_train_full.json"),
+    "mots_train": ("mot/mots/train", "mot/annotations/mots_train_full.json"),
+    "mots_train_02": ("mot/mots/train", "mot/annotations/mots_train_02.json"),
+    "mots_val_02": ("mot/mots/train", "mot/annotations/mots_val_02.json"),
+    "mots_train_05": ("mot/mots/train", "mot/annotations/mots_train_05.json"),
+    "mots_val_05": ("mot/mots/train", "mot/annotations/mots_val_05.json"),
+    "mots_train_09": ("mot/mots/train", "mot/annotations/mots_train_09.json"),
+    "mots_val_09": ("mot/mots/train", "mot/annotations/mots_val_09.json"),
+    "mots_train_11": ("mot/mots/train", "mot/annotations/mots_train_11.json"),
+    "mots_val_11": ("mot/mots/train", "mot/annotations/mots_val_11.json"),
+    "kitti_mots_train": ("mot/kitti/training", "mot/annotations/kitti_mots_train.json"),
+    "kitti_mots_val": ("mot/kitti/training", "mot/annotations/kitti_mots_val.json"),
+    "kitti_mots_train_full": ("mot/kitti/training", "mot/annotations/kitti_mots_train_full.json"),
 }
 
 metadata_mots = {

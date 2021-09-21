@@ -17,27 +17,35 @@ import json
 import copy
 
 from pycocotools import mask as maskUtils
+# # USER: Debug for visualization of annotations
+# import matplotlib as mpl
+# import matplotlib.colors as mplc
+# import matplotlib.pyplot as plt
+# from detectron2.utils.colormap import random_color
+# from adet.data.dataset_mapper import segmToMask
 
 
-KITTI_PATH = osp.join(osp.dirname(__file__), "kitti")
-MOTS_PATH = osp.join(osp.dirname(__file__), 'mots')
-ANNO_PATH = osp.join(MOTS_PATH, 'annotations')
+MOT_PATH = osp.join(osp.dirname(__file__), "mot")
+KITTI_PATH = osp.join(MOT_PATH, "kitti")
+MOTS_PATH = osp.join(MOT_PATH, 'mots')
+ANNO_PATH = osp.join(MOT_PATH, 'annotations')
 if not osp.exists(ANNO_PATH):
     os.makedirs(ANNO_PATH)
 
-MOTS_CATEGORIES = {1: "car", 2: "pedestrian"}
+MOTS_CATEGORIES = {1: "car", 2: "pedestrian", 10: "ignored"}
 
 
-def load_annos_from_txt(txt_path):
-    """
-    Load annotations from the txt file of a video sequence
+def load_mots_txt(txt_path):
+    """ Load MOTS annotations from the txt file of a video sequence.
 
     Returns:
-        objects_per_frame (dict): {frame_id: list(object_dict)}
+        objects_per_frame (dict): {frame_id: list[obj1_annos, obj2_annos, ...]}
     """
     objects_per_frame = {}
     obj_ids_per_frame = {}  # To check that no frame contains two objects with same id
     combined_mask_per_frame = {}  # To check that no frame contains overlapping masks
+    # count the number of annotations per category in the sequence.
+    cat_cnt = {k: 0 for k in MOTS_CATEGORIES}
     print(f"Loading annotations from {txt_path}")
 
     annos = np.loadtxt(txt_path, dtype=np.str_, delimiter=' ')
@@ -50,6 +58,7 @@ def load_annos_from_txt(txt_path):
 
         obj_id = int(fields[1])
         if obj_id == 10000:  # ignored region
+            cat_cnt[10] += 1
             continue
 
         assert obj_id not in obj_ids_per_frame[frame], f"Multiple objects with the same id: {obj_id} in frame-{frame}"
@@ -58,11 +67,12 @@ def load_annos_from_txt(txt_path):
         cat_id = int(fields[2])
         # cat_id should be either 1 for "car" or 2 for "pedestrian"
         assert cat_id in MOTS_CATEGORIES, f"Unknown object class id: {cat_id}"
+        cat_cnt[cat_id] += 1
 
         mask = {
             "size": [int(fields[3]), int(fields[4])],  # img_h, img_w
             "counts": str(fields[5])
-        }  # binary mask in RLE format 
+        }  # binary mask in RLE format
         area = maskUtils.area(mask)  # mask area
         if area < 1:  # filter out invalid instances with empty mask
             continue
@@ -75,224 +85,299 @@ def load_annos_from_txt(txt_path):
             combined_mask_per_frame[frame] = maskUtils.merge([combined_mask_per_frame[frame], mask], intersect=False)
 
         objects_per_frame[frame].append({
-            "category_id": cat_id,  # keep the category_id in MOTS annotation
+            "category_id": 1 if cat_id == 2 else 2,  # use unified category id, pedestrian: 1, car: 2
             "obj_id": obj_id,
-            "inst_id": obj_id % 1000,
             "bbox": maskUtils.toBbox(mask).tolist(),  # enclosing bbox, fmt: xywh
             "segmentation": mask,
             "area": float(area),
             "iscrowd": 0
         })
 
+    cat_cnt = {MOTS_CATEGORIES[k]: v for k, v in cat_cnt.items() if v > 0}
+    print(f"Number of annos: {cat_cnt}")
     return objects_per_frame
 
 
-def load_seqs_annos_from_txt(path):
+def load_seqs_annos_from_txt(path, load_txt_func):
+    """
+    Load annotations from txt files of all sequences in the given path.
+
+    Returns:
+        seqs_annos (dict): {seq_id: seq_annos}
+    """
     seqs_annos = {}
-    seqs_txt = [
+    seqs_txt = sorted([
         txt for txt in os.listdir(path) if txt.endswith(".txt")
-    ]
+    ])
     for seq_txt in seqs_txt:
         seq_id = int(seq_txt[0:4])  # e.g., "0002.txt" -> 2
-        seqs_annos[seq_id] = load_annos_from_txt(osp.join(path, seq_txt))
+        seqs_annos[seq_id] = load_txt_func(osp.join(path, seq_txt))
 
     return seqs_annos
 
 
-def cocofy_mots(args, seqs_annos):
-    out = args["out"]
-    img_cnt = 0
-    imgs_cnt = 0
-    ann_cnt = 0
-    annos_cnt = {k: 0 for k in CAT_ID_MAP}
-    inst_ids = {
-        k: {"db": {}, "cnt": 0} for k in CAT_ID_MAP
+def get_cocofied_json_data(args):
+    out = {
+        "info": {"description": f"{args['dataset_name']}."},
+        "categories": args["categories"],
+        # "videos": [],
+        "images": [],
+        "annotations": []
     }
-    obj_ids = {"db": {}, "cnt": 0}
-    box_sizes = {k: [] for k in CAT_ID_MAP}
+
+    # count the number of frames in the dataset
+    imgs_cnt = {"valid": 0, "total": 0}
+    # all category names in the dataset
+    cat_names = {cat["id"]: cat["name"] for cat in args["categories"]}
+    # count the number of annotated objects per category in the dataset
+    annos_cnt = {c: 0 for c in cat_names}
+    # count the number of annotated indentities per category in the dataset
+    objs_dict = {c: {} for c in cat_names}
+    # count the width, height, aspect ration, and area of boxes in each category
+    boxes_cnt = {c: [] for c in cat_names}
+
+    print(f"\nStart COCOfying {args['dataset_name']} with videos: {args['seqs']}")
 
     for seq, imgs_path in zip(args["seqs"], args["imgs_path"]):
         seq_id = int(seq[-2:])
         # dict, {frame_id: [{obj1_annos}, {obj2_annos}, ...]}
-        annos_per_frame = seqs_annos[seq_id]
-        num_valid_frames = len([f for f in annos_per_frame if len(annos_per_frame[f]) > 0])
+        seq_annos = args["seqs_annos"][seq_id]
 
-        imgs = sorted([
-            img for img in os.listdir(imgs_path)
-            if img.endswith(".jpg") or img.endswith(".png")
+        img_files = sorted([
+            img for img in os.listdir(imgs_path) if img.endswith(args["imExt"])
         ])
-        num_imgs = len(imgs)
-        imgs_cnt += num_imgs
+        num_imgs = len(img_files)
 
-        num_annos = {k: 0 for k in CAT_ID_MAP}  # count number of annotated instances
-        num_insts = {k: 0 for k in CAT_ID_MAP}  # count number of identities within each category
-        # image number with non-empty annotations in the video sequence, starting from 1.
-        frame_id = 0
+        # debug_path = osp.join(imgs_path, "../debug")
+        # if not osp.exists(debug_path):
+        #     os.mkdir(debug_path)
+        # args["debug_path"] = debug_path
 
-        for i, img_name in enumerate(imgs):
-            real_frame_id = int(img_name.split('.')[0])
+        # count the number of annotated objects per category in the current sequence.
+        seq_annos_cnt = {c: 0 for c in cat_names}
+        # count the number of annotated identities per category in the current sequence.
+        seq_objs_cnt = {c: 0 for c in cat_names}
+        # count the number of frames which contain at least one annotation of an object
+        img_cnt = 0
+        img_h = img_w = 0
+
+        for frame_id, filename in enumerate(img_files):
+            # frame number annotated in the filename and the original annotations
+            raw_frame_id = int(filename.split('.')[0])
             # frame with empty annotations
-            if real_frame_id not in annos_per_frame:
+            if raw_frame_id not in seq_annos:
                 continue
-            # frame with empty valid (no ignored region) annotations
-            annos_cur_frame = annos_per_frame[real_frame_id]
+            annos_cur_frame = seq_annos[raw_frame_id]
             if len(annos_cur_frame) == 0:
                 continue
 
-            # real_frame_id starts from 0 in KITTI-MOTS, and 1 in MOTSChallenge
-            if "kitti" in args["dataset_name"]:
-                assert real_frame_id == i
-                img_file_path = f"image_02/{seq}/{img_name}"
+            # raw_frame_id starts from 0 in KITTI, and 1 in MOT
+            if "kitti" in imgs_path:
+                assert raw_frame_id == frame_id
+                img_path = f"image_02/{seq}/{filename}"
             else:
-                assert real_frame_id == i + 1
-                img_file_path = f"{seq}/img1/{img_name}"
+                assert raw_frame_id == frame_id + 1
+                img_path = f"{seq}/img1/{filename}"
 
-            img = cv2.imread(osp.join(imgs_path, img_name))
+            img = cv2.imread(osp.join(imgs_path, filename))
+            if img_h > 0 and img_w > 0:
+                assert img.shape[0] == img_h and img.shape[1] == img_w
             img_h, img_w = img.shape[:2]
-            frame_id += 1
-            img_id = img_cnt + frame_id
 
+            img_id = imgs_cnt["total"] + frame_id
             img_info = {
-                "file_name": img_file_path,
-                "frame_id": frame_id,  # image number in the video sequence, starting from 1.
+                "file_name": img_path,
+                "frame_id": frame_id,  # image number in the video sequence, starting from 0.
                 "height": img_h,
                 "width": img_w,
-                "id": img_id,  # image number in the entire dataset, starting from 1.
+                "id": img_id,  # image number in the entire dataset, starting from 0.
                 # "prev_image_id": img_id - 1 if i > 0 else -1,  # image number in the entire dataset
-                # "next_image_id": img_id + 1 if i < num_valid_frames - 1 else -1,
-                "video_id": seq_id,
-                "num_frames": num_valid_frames
+                # "next_image_id": img_id + 1 if i < num_valid_imgs - 1 else -1,
+                "seq_id": seq_id,
+                "num_frames": num_imgs
             }
-            if num_valid_frames < num_imgs:
-                img_info["real_frame_id"] = real_frame_id
             out["images"].append(img_info)
+            img_cnt += 1
+
+            # boxes, masks = [], []
 
             for obj in annos_cur_frame:
-                anno = copy.deepcopy(obj)
-                # unique object id in the entire dataset
-                obj_id = f"{seq_id}_{obj['obj_id']}"
-                if obj_id not in obj_ids["db"]:
-                    obj_ids["db"][obj_id] = obj_ids["cnt"]
-                    obj_ids["cnt"] += 1
-
                 cat_id = obj["category_id"]
-                cat_name = MOTS_CATEGORIES[cat_id]
-                cat_inst_ids = inst_ids[cat_name]
-                if obj_id not in cat_inst_ids["db"]:
-                    cat_inst_ids["db"][obj_id] = cat_inst_ids["cnt"]
-                    cat_inst_ids["cnt"] += 1
-                    num_insts[cat_name] += 1
 
-                num_annos[cat_name] += 1
-                ann_cnt += 1
+                if cat_id not in cat_names:
+                    # boxes.append(np.array(obj["bbox"] + [cat_id]))
+                    # masks.append(segmToMask(obj["segmentation"], (img_h, img_w)))
+                    continue
+
+                # hard copy of each object's annotation to avoid reference
+                anno = copy.deepcopy(obj)
+                # unique object identity id in the entire dataset: seqId_catId_objId
+                obj_uId = f"{args['dataset_name']}_{seq_id}_{cat_id}_{anno['obj_id']}"
+
+                # encounter a new object identity in the dataset
+                if obj_uId not in objs_dict[cat_id]:
+                    # assign a unique identity id in the entire dataset, starting from 0.
+                    obj_id = sum([len(v) for v in objs_dict.values()])
+                    objs_dict[cat_id][obj_uId] = obj_id
+                    seq_objs_cnt[cat_id] += 1
+                else:
+                    obj_id = objs_dict[cat_id][obj_uId]
+
+                # annotation id in the entire dataset, starting from 0.
+                anno_id = sum([v for v in annos_cnt.values()])
                 anno.update(
                     image_id=img_id,
-                    id=ann_cnt,  # annotation id in the entire dataset, starting from 1
-                    inst_id=obj_ids["db"][obj_id],  # instance id across all categories in the entire dataset, starting from 0
-                    cat_inst_id=cat_inst_ids["db"][obj_id],  # instance id within each category in the entire dataset, starting from 0
+                    id=anno_id,
+                    obj_id=obj_id,
+                    seq_id=seq_id,
                 )
-                anno["category_id"] = CAT_ID_MAP[cat_name]
-                out["annotations"].append(anno) 
+                out["annotations"].append(anno)
+                annos_cnt[cat_id] += 1
+                seq_annos_cnt[cat_id] += 1
 
                 box_w, box_h = anno["bbox"][2:4]
-                box_sizes[cat_name].append([box_w, box_h, box_w / box_h, box_w * box_h])
+                boxes_cnt[cat_id].append([box_w, box_h, box_w / box_h, box_w * box_h])
 
-        img_cnt += num_valid_frames
-        for cat, cnt in num_annos.items():
-            annos_cnt[cat] += cnt
-        print(f"seq: {seq}, images: {num_valid_frames}/{num_imgs}, size: {img_w}x{img_h}, annos: {num_annos}, instances: {num_insts}")
-        # print(obj_ids["cnt"], {cat: insts["cnt"] for cat, insts in inst_ids.items()})
+            # if len(boxes) == 0:
+            #     continue
+            # if seq_id == 1:
+            #     continue
+            # dpi = 200
+            # fig = plt.figure(figsize=[img_w / dpi, img_h / dpi], frameon=False)
+            # ax = plt.Axes(fig, [0., 0., 1., 1.]);  ax.axis("off");  fig.add_axes(ax)
+            # ax.imshow(img[..., ::-1])
+            # boxes = np.array(boxes)
+            # for j, box in enumerate(boxes):
+            #     x0, y0, w, h, cat_id = box
+            #     color = random_color(rgb=True, maximum=1)
+            #     ax.add_patch(
+            #         mpl.patches.Rectangle((x0, y0), w, h, fill=False, edgecolor=color, linewidth=2, alpha=0.8, linestyle='-')
+            #     )
+            #     # ax.text(
+            #     #     x0, y0, f"{cat_id}", color=color
+            #     # )
+            #     rgba = np.zeros((img_h, img_w, 4), dtype=np.float32)
+            #     rgba[..., :3] = mplc.to_rgb(color)
+            #     rgba[..., 3] = (masks[j] == 1).astype(np.float32) * 0.5
+            #     ax.imshow(rgba)
 
-    insts_cnt = {cat: insts["cnt"] for cat, insts in inst_ids.items()}
-    print(f"\ndataset:{args['dataset_name']}\nimages: {img_cnt}/{imgs_cnt}\nannos: {annos_cnt}\ninstances: {insts_cnt}")
-    for k in box_sizes:
-        if len(box_sizes[k]) == 0:
-            continue
-        boxes = np.array(box_sizes[k])
-        print(f"{k} (whas): min: {boxes.min(axis=0)}, max: {boxes.max(axis=0)}, mean: {boxes.mean(axis=0)}")
-    with open(args["out_json"], 'w') as f:
-        json.dump(out, f, indent=4)
-    print(f"COCO-style annotations saved in {args['out_json']}\n")
+            # plt.savefig(osp.join(args["debug_path"], filename), dpi=dpi)
+            # plt.close("all")
+
+        imgs_cnt["valid"] += img_cnt
+        imgs_cnt["total"] += num_imgs
+        seq_annos_cnt = {cat_names[c]: v for c, v in seq_annos_cnt.items()}
+        seq_objs_cnt = {cat_names[c]: v for c, v in seq_objs_cnt.items()}
+        print(f"seq: {seq}, images: {img_cnt}/{num_imgs}, size: {img_w}x{img_h}, annos: {seq_annos_cnt}, objs: {seq_objs_cnt}")
+
+    annos_cnt = {cat_names[c]: v for c, v in annos_cnt.items()}
+    objs_cnt = {cat_names[c]: len(v) for c, v in objs_dict.items()}
+    print(f"\ndataset: {args['dataset_name']}\nimages: {imgs_cnt['valid']}/{imgs_cnt['total']}\nannos: {annos_cnt}\nobjs: {objs_cnt}")
+    for c in boxes_cnt:
+        boxes = np.array(boxes_cnt[c])
+        print(f"{cat_names[c]} (whas): min: {boxes.min(axis=0)}, max: {boxes.max(axis=0)}, mean: {boxes.mean(axis=0)}")
+    print()
+
+    return out
 
 
-def cocofy_mots_challenge(seqs_annos, istrain=True, val_seq=""):
-    if not istrain and val_seq == "":
-        return
-
-    args = {}
-    args["out"] = {
-        "info": {"description": "MOTSChallenge dataset."},
-        "categories": [
-            {
-                "id": CAT_ID_MAP["pedestrian"],
-                "name": "pedestrian",
-                "supercategory": "person",
-            }
-        ],
-        "images": [],
-        # "videos": [],
-        "annotations": []
-    }
-
+def cocofy_mots_challenge():
+    anno_path = osp.join(ANNO_PATH, "mots_txt")
     data_path = osp.join(MOTS_PATH, "train")
-    if istrain:
-        seqs = sorted([
-            seq for seq in os.listdir(data_path)
-            if seq.startswith("MOTS") and seq[-2:] != val_seq
-        ])
-        args["dataset_name"] = f"mots_train_{val_seq}" if val_seq else "mots_train"
-    else:
-        seqs = [f"MOTS20-{val_seq}"]
-        args["dataset_name"] = f"mots_val_{val_seq}"
-
-    args["seqs"] = seqs
-    args["imgs_path"] = [osp.join(data_path, f"{seq}/img1") for seq in seqs]
-    args["out_json"] = osp.join(ANNO_PATH, f"{args['dataset_name']}.json")
-
-    print(f"\nStarting COCOfying MOTS-Challenge with videos: {seqs}")
-    cocofy_mots(args, seqs_annos)
-
-
-def cocofy_kitti_mots(seqs_annos, istrain=True, val_seq_ids=[]):
-    if not istrain and len(val_seq_ids) == 0:
-        return
 
     args = {}
-    args["out"] = {
-        "info": {"description": "KITTI-MOTS dataset."},
-        "categories": [
-            {
-                "id": CAT_ID_MAP["pedestrian"],
-                "name": "pedestrian",
-                "supercategory": "person",
-            },
-            {
-                "id": CAT_ID_MAP["car"],
-                "name": "car",
-                "supercategory": "vehicle",
-            },
-        ],
-        "images": [],
-        "annotations": []
-    }
+    args["seqs_annos"] = load_seqs_annos_from_txt(anno_path, load_mots_txt)
+    args["seqs"] = sorted([
+        seq for seq in os.listdir(data_path) if seq.startswith("MOTS")
+    ])
+    args["imgs_path"] = [
+        osp.join(data_path, seq, "img1") for seq in args["seqs"]
+    ]
+    args["categories"] = [
+        {"id": 1, "name": "pedestrian", "supercategory": "person"}
+    ]
+    args["dataset_name"] = "MOTSChallenge Dataset"
+    args["imExt"] = ".jpg"
 
+    json_data = get_cocofied_json_data(args)
+
+    json_file = osp.join(ANNO_PATH, "mots_train_full.json")
+    with open(json_file, 'w') as f:
+        json.dump(json_data, f, indent=4)
+    print(f"COCO-style annotations saved in {json_file}.")
+
+    """ Split into training set and validation set."""
+    seqs_id = [2, 5, 9, 11]
+    for seq_id in seqs_id:
+        out = {k: v for k, v in json_data.items() if k not in ["images", "annotations"]}
+        out["images"] = [
+            copy.deepcopy(img) for img in json_data["images"] if img["seq_id"] != seq_id
+        ]
+        out["annotations"] = [
+            copy.deepcopy(anno) for anno in json_data["annotations"] if anno["seq_id"] != seq_id
+        ]
+        json_file = osp.join(ANNO_PATH, f"mots_train_{seq_id:02d}.json")
+        with open(json_file, 'w') as f:
+            json.dump(out, f, indent=4)
+        print(f"COCO-style annotations saved in {json_file}.")
+
+        out["images"] = [
+            copy.deepcopy(img) for img in json_data["images"] if img["seq_id"] == seq_id
+        ]
+        out["annotations"] = [
+            copy.deepcopy(anno) for anno in json_data["annotations"] if anno["seq_id"] == seq_id
+        ]
+        json_file = osp.join(ANNO_PATH, f"mots_val_{seq_id:02d}.json")
+        with open(json_file, 'w') as f:
+            json.dump(out, f, indent=4)
+        print(f"COCO-style annotations saved in {json_file}.")
+    print()
+
+
+def cocofy_kitti_mots():
+    anno_path = osp.join(ANNO_PATH, "kitti_txt")
     data_path = osp.join(KITTI_PATH, "training/image_02")
-    if istrain:
-        seqs = sorted([
-            seq for seq in os.listdir(data_path)
-            if seq.startswith("00") and int(seq) not in val_seq_ids
-        ])
-        args["dataset_name"] = "kitti_mots_train" if len(val_seq_ids) > 0 else "kitti_mots_train_full"
-    else:
-        seqs = [f"{seq:04d}" for seq in val_seq_ids]
-        args["dataset_name"] = "kitti_mots_val"
 
-    args["seqs"] = seqs
-    args["imgs_path"] = [osp.join(data_path, seq) for seq in seqs]
-    args["out_json"] = osp.join(ANNO_PATH, f"{args['dataset_name']}.json")
+    args = {}
+    args["seqs_annos"] = load_seqs_annos_from_txt(anno_path, load_mots_txt)
+    args["seqs"] = sorted([
+        seq for seq in os.listdir(data_path) if seq.startswith("00")
+    ])
+    args["imgs_path"] = [
+        osp.join(data_path, seq) for seq in args["seqs"]
+    ]
+    args["categories"] = [
+        {"id": 1, "name": "pedestrian", "supercategory": "person"},
+        {"id": 2, "name": "car", "supercategory": "vehicle"},
+    ]
+    args["dataset_name"] = "KITTI-MOTS Dataset"
+    args["imExt"] = ".png"
 
-    print(f"\nStarting COCOfying KITTI-MOTS with videos: {seqs}")
-    cocofy_mots(args, seqs_annos)
+    json_data = get_cocofied_json_data(args)
+
+    # json_file = osp.join(ANNO_PATH, "kitti_mots_train_full.json")
+    # with open(json_file, 'w') as f:
+    #     json.dump(json_data, f, indent=4)
+    # print(f"COCO-style annotations saved in {json_file}.")
+
+    """ Split into training set and validation set."""
+    seqs_id = {
+        "train": [0, 1, 3, 4, 5, 9, 11, 12, 15, 17, 19, 20],
+        "val": [2, 6, 7, 8, 10, 13, 14, 16, 18]
+    }
+    for k, seqs in seqs_id.items():
+        out = {k: v for k, v in json_data.items() if k not in ["images", "annotations"]}
+        out["images"] = [
+            copy.deepcopy(img) for img in json_data["images"] if img["seq_id"] in seqs
+        ]
+        out["annotations"] = [
+            copy.deepcopy(anno) for anno in json_data["annotations"] if anno["seq_id"] in seqs
+        ]
+        json_file = osp.join(ANNO_PATH, f"kitti_mots_{k}.json")
+        with open(json_file, 'w') as f:
+            json.dump(out, f, indent=4)
+        print(f"COCO-style annotations saved in {json_file}.")
+    print()
 
 
 def get_parser():
@@ -303,33 +388,14 @@ def get_parser():
     parser.add_argument(
         "--kitti", action="store_true", help="cocofy KITTI-MOTS",
     )
-    parser.add_argument(
-        "--with-coco-catid", action="store_true", default=False, help="if enabled, use COCO category id",
-    )
+
     return parser
 
 
 if __name__ == "__main__":
     args = get_parser().parse_args()
-    if args.with_coco_catid:
-        CAT_ID_MAP = {"pedestrian": 1, "car": 3}
-    else:
-        CAT_ID_MAP = {"pedestrian": 1, "car": 2}
 
     if args.kitti:
-        anno_path = osp.join(ANNO_PATH, "kitti_txt")
-        # dict, {seq_id: annos_per_seq}
-        seqs_annos = load_seqs_annos_from_txt(anno_path)
-        val_seq_ids = [2, 6, 7, 8, 10, 13, 14, 16, 18]
-        cocofy_kitti_mots(seqs_annos, istrain=True, val_seq_ids=val_seq_ids)
-        cocofy_kitti_mots(seqs_annos, istrain=False, val_seq_ids=val_seq_ids)
-        cocofy_kitti_mots(seqs_annos, istrain=True, val_seq_ids=[])
-
+        cocofy_kitti_mots()
     if args.mots:
-        anno_path = osp.join(ANNO_PATH, "mots_txt")
-        seqs_annos = load_seqs_annos_from_txt(anno_path)
-        for val_seq in ["02", "05", "09", "11"]:
-            cocofy_mots_challenge(seqs_annos, istrain=True, val_seq=val_seq)
-            cocofy_mots_challenge(seqs_annos, istrain=False, val_seq=val_seq)
-
-        cocofy_mots_challenge(seqs_annos, istrain=True, val_seq="")
+        cocofy_mots_challenge()
