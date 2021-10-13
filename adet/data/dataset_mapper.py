@@ -90,6 +90,7 @@ class DatasetMapperWithBasis(DatasetMapper):
             self.use_instance_mask = False
             self.recompute_boxes = False
         self.instance_mask_format = cfg.INPUT.MASK_FORMAT
+        self.obj_id_on = cfg.INPUT.OBJ_ID_ON
 
     def __call__(self, dataset_dict):
         """
@@ -216,6 +217,10 @@ class DatasetMapperWithBasis(DatasetMapper):
             instances = annotations_to_instances(
                 annos, image_shape, mask_format=self.instance_mask_format
             )
+            if self.obj_id_on:
+                instances.gt_ids = torch.as_tensor(
+                    [int(obj["obj_id"]) for obj in annos], dtype=torch.int64
+                )
 
             # After transforms such as cropping are applied, the bounding box may no longer
             # tightly bound the object. As an example, imagine a triangle object
@@ -374,9 +379,9 @@ class PairDatasetMapper(DatasetMapperWithBasis):
             instances.frame_ids = torch.as_tensor(
                 [int(d["frame_id"]) for _ in annos], dtype=torch.int64
             )
-            # USER: instance identity id, unique in the entire dataset
-            instances.inst_ids = torch.as_tensor(
-                [int(obj["inst_id"]) for obj in annos], dtype=torch.int64
+            # USER: object identity id, unique in the entire dataset
+            instances.gt_ids = torch.as_tensor(
+                [int(obj["obj_id"]) for obj in annos], dtype=torch.int64
             )
 
             # After transforms such as cropping are applied, the bounding box may no longer

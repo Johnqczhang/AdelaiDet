@@ -87,32 +87,32 @@ def load_mots_json(json_file, image_root, dataset_name=None, extra_annotation_ke
     if timer.seconds() > 1:
         logger.info("Loading {} takes {:.2f} seconds.".format(json_file, timer.seconds()))
 
-    id_map = None
-    if dataset_name is not None:
-        meta = MetadataCatalog.get(dataset_name)
-        cat_ids = sorted(coco_api.getCatIds())
-        cats = coco_api.loadCats(cat_ids)
-        # The categories in a custom json file may not be sorted.
-        thing_classes = [c["name"] for c in sorted(cats, key=lambda x: x["id"])]
-        meta.thing_classes = thing_classes
+    assert dataset_name is not None
+    is_train = "train" in dataset_name
+    meta = MetadataCatalog.get(dataset_name)
+    cat_ids = sorted(coco_api.getCatIds())
+    cats = coco_api.loadCats(cat_ids)
+    # The categories in a custom json file may not be sorted.
+    thing_classes = [c["name"] for c in sorted(cats, key=lambda x: x["id"])]
+    meta.thing_classes = thing_classes
 
-        # In COCO, certain category ids are artificially removed,
-        # and by convention they are always ignored.
-        # We deal with COCO's id issue and translate
-        # the category ids to contiguous ids in [0, 80).
+    # In COCO, certain category ids are artificially removed,
+    # and by convention they are always ignored.
+    # We deal with COCO's id issue and translate
+    # the category ids to contiguous ids in [0, 80).
 
-        # It works by looking at the "categories" field in the json, therefore
-        # if users' own json also have incontiguous ids, we'll
-        # apply this mapping as well but print a warning.
-        if not (min(cat_ids) == 1 and max(cat_ids) == len(cat_ids)):
-            if "coco" not in dataset_name:
-                logger.warning(
-                    """
+    # It works by looking at the "categories" field in the json, therefore
+    # if users' own json also have incontiguous ids, we'll
+    # apply this mapping as well but print a warning.
+    if not (min(cat_ids) == 1 and max(cat_ids) == len(cat_ids)):
+        if "coco" not in dataset_name:
+            logger.warning(
+                """
 Category ids in annotations are not in [1, #categories]! We'll apply a mapping for you.
 """
-                )
-        id_map = {v: i for i, v in enumerate(cat_ids)}
-        meta.thing_dataset_id_to_contiguous_id = id_map
+            )
+    id_map = {v: i for i, v in enumerate(cat_ids)}
+    meta.thing_dataset_id_to_contiguous_id = id_map
 
     # sort indices for reproducible results
     img_ids = sorted(coco_api.imgs.keys())
@@ -192,6 +192,9 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
             assert anno["image_id"] == image_id
 
             assert anno.get("ignore", 0) == 0, '"ignore" in COCO json file is not supported.'
+            # Filter out ignored annotations during evaluation
+            if not is_train and anno["obj_id"] == -1:
+                continue
 
             obj = {key: anno[key] for key in ann_keys if key in anno}
 
@@ -210,15 +213,14 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
                 obj["segmentation"] = segm
 
             obj["bbox_mode"] = BoxMode.XYWH_ABS
-            if id_map:
-                annotation_category_id = obj["category_id"]
-                try:
-                    obj["category_id"] = id_map[annotation_category_id]
-                except KeyError as e:
-                    raise KeyError(
-                        f"Encountered category_id={annotation_category_id} "
-                        "but this id does not exist in 'categories' of the json file."
-                    ) from e
+            annotation_category_id = obj["category_id"]
+            try:
+                obj["category_id"] = id_map[annotation_category_id]
+            except KeyError as e:
+                raise KeyError(
+                    f"Encountered category_id={annotation_category_id} "
+                    "but this id does not exist in 'categories' of the json file."
+                ) from e
             objs.append(obj)
         record["annotations"] = objs
         dataset_dicts.append(record)
@@ -250,7 +252,7 @@ class PairwiseMapDataset(MapDataset):
         offset = self._rng.sample(nearby_frames_offset, k=1)[0]
         next_idx = cur_idx + offset
         next_data = self._dataset[next_idx]
-        assert next_data["video_id"] == data["video_id"], \
+        assert next_data["seq_id"] == data["seq_id"], \
             f'img-{data["image_id"]} and img-{next_data["image_id"]} are not sampled from the same video'
         assert next_data["frame_id"] == data["frame_id"] + offset, \
             f'img-{data["image_id"]} and img-{next_data["image_id"]} are not adjacent'

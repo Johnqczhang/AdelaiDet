@@ -34,6 +34,7 @@ from detectron2.data.detection_utils import read_image
 from adet.config import get_cfg
 from adet.utils.tracker import MOTSTracker
 
+from demo import setup_cfg
 from predictor import VisualizationDemo
 
 
@@ -41,21 +42,8 @@ COCO_CAT_ID_TO_MOTS = {
     0: 2,  # pedestrian
     2: 1,  # car
 }
-
-
-def setup_cfg(args):
-    # load config from file and command-line arguments
-    cfg = get_cfg()
-    cfg.merge_from_file(args.config_file)
-    cfg.merge_from_list(args.opts)
-    # Set score_threshold for builtin models
-    cfg.MODEL.RETINANET.SCORE_THRESH_TEST = args.confidence_threshold
-    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = args.confidence_threshold
-    cfg.MODEL.FCOS.INFERENCE_TH_TEST = args.confidence_threshold
-    cfg.MODEL.MEInst.INFERENCE_TH_TEST = args.confidence_threshold
-    cfg.MODEL.PANOPTIC_FPN.COMBINE.INSTANCES_CONFIDENCE_THRESH = args.confidence_threshold
-    cfg.freeze()
-    return cfg
+MOT_PATH = osp.join(osp.dirname(__file__), "../datasets/mot")
+DATA_PATH = osp.join(MOT_PATH, "data")
 
 
 def get_parser():
@@ -199,13 +187,12 @@ def infer_with_tracking(args, demo, tracker):
 
 
 def infer_on_mots(args, demo):
-    mots_path = osp.join(osp.dirname(__file__), "../datasets/mot/mots")
     mots_seqs = [
-        osp.join(mots_path, "train", seq) for seq in os.listdir(osp.join(mots_path, "train"))
+        osp.join(DATA_PATH, "MOTS-train", seq) for seq in os.listdir(osp.join(DATA_PATH, "MOTS-train"))
         if seq.startswith("MOTS")
     ]
     mots_seqs += [
-        osp.join(mots_path, "test", seq) for seq in os.listdir(osp.join(mots_path, "test"))
+        osp.join(DATA_PATH, "MOTS-test", seq) for seq in os.listdir(osp.join(DATA_PATH, "MOTS-test"))
         if seq.startswith("MOTS")
     ]
     if args.input[1] == "val":
@@ -259,7 +246,7 @@ def infer_on_mots(args, demo):
 
 
 def infer_on_kitti_mots(args, demo):
-    data_path = osp.join(osp.dirname(__file__), "../datasets/mot/kitti")
+    data_path = osp.join(DATA_PATH, "kitti")
     inputs = args.input[1].split('-')
     assert inputs[0] in ["val", "test"]
 

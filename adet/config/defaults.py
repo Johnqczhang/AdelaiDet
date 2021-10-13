@@ -10,6 +10,8 @@ _C.MODEL.BACKBONE.ANTI_ALIAS = False
 _C.MODEL.RESNETS.DEFORM_INTERVAL = 1
 _C.INPUT.HFLIP_TRAIN = True
 _C.INPUT.CROP.CROP_INSTANCE = True
+# If True, collect object identity labels from annotations for training
+_C.INPUT.OBJ_ID_ON = False
 
 # Optimizer type.
 _C.SOLVER.OPTIMIZER = "SGD"
@@ -44,6 +46,11 @@ _C.MODEL.FCOS.POST_NMS_TOPK_TEST = 100
 _C.MODEL.FCOS.TOP_LEVELS = 2
 _C.MODEL.FCOS.NORM = "GN"  # Support GN or none
 _C.MODEL.FCOS.USE_SCALE = True
+
+# The strategy of selecting target for the location which associates with multiple ground-truth.
+# It can be "area" (the ground-truth box area),
+# or "cdist" (the distance from the location to the center of the ground-truth object)
+_C.MODEL.FCOS.LOCATION_TO_GT = "area"
 
 # The options for the quality of box prediction
 # It can be "ctrness" (as described in FCOS paper) or "iou"

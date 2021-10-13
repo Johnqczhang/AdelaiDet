@@ -15,6 +15,7 @@ from adet.layers import ml_nms, IOULoss
 logger = logging.getLogger(__name__)
 
 INF = 100000000
+IGN = 99990000
 
 """
 Shape shorthand in this module:
@@ -81,6 +82,10 @@ class FCOSOutputs(nn.Module):
         soi.append([prev_size, INF])
         self.sizes_of_interest = soi
 
+        self.location_to_gt = cfg.MODEL.FCOS.LOCATION_TO_GT
+        assert self.location_to_gt in ("area", "cdist"), \
+            'MODEL.FCOS.LOCATION_TO_GT can only be "area" or "cdist"'
+
         self.loss_normalizer_cls = cfg.MODEL.FCOS.LOSS_NORMALIZER_CLS
         assert self.loss_normalizer_cls in ("moving_fg", "fg", "all"), \
             'MODEL.FCOS.CLS_LOSS_NORMALIZER can only be "moving_fg", "fg", or "all"'
@@ -113,14 +118,15 @@ class FCOSOutputs(nn.Module):
         num_loc_list = [len(loc) for loc in locations]
 
         # compute locations to size ranges
-        loc_to_size_range = []
-        for l, loc_per_level in enumerate(locations):
-            loc_to_size_range_per_level = loc_per_level.new_tensor(self.sizes_of_interest[l])
-            loc_to_size_range.append(
-                loc_to_size_range_per_level[None].expand(num_loc_list[l], -1)
-            )
+        if len(self.sizes_of_interest) > 1:
+            loc_to_size_range = []
+            for l, loc_per_level in enumerate(locations):
+                loc_to_size_range_per_level = loc_per_level.new_tensor(self.sizes_of_interest[l])
+                loc_to_size_range.append(
+                    loc_to_size_range_per_level[None].expand(num_loc_list[l], -1)
+                )
+            loc_to_size_range = torch.cat(loc_to_size_range, dim=0)
 
-        loc_to_size_range = torch.cat(loc_to_size_range, dim=0)
         locations = torch.cat(locations, dim=0)
 
         training_targets = self.compute_targets_for_locations(
@@ -217,8 +223,6 @@ class FCOSOutputs(nn.Module):
                 target_inds.append(labels_per_im.new_zeros(locations.size(0)) - 1)
                 continue
 
-            area = targets_per_im.gt_boxes.area()
-
             l = xs[:, None] - bboxes[:, 0][None]
             t = ys[:, None] - bboxes[:, 1][None]
             r = bboxes[:, 2][None] - xs[:, None]
@@ -239,26 +243,47 @@ class FCOSOutputs(nn.Module):
             else:
                 is_in_boxes = reg_targets_per_im.min(dim=2)[0] > 0
 
-            max_reg_targets_per_im = reg_targets_per_im.max(dim=2)[0]
-            # limit the regression range for each location
-            is_cared_in_the_level = \
-                (max_reg_targets_per_im >= size_ranges[:, [0]]) & \
-                (max_reg_targets_per_im <= size_ranges[:, [1]])
+            if self.location_to_gt == "area":
+                area = targets_per_im.gt_boxes.area()
+                locations_to_gt = area[None].repeat(len(locations), 1)
+            else:
+                if targets_per_im.has("gt_centers"):
+                    centers = targets_per_im.gt_centers
+                else:
+                    centers = (bboxes[:, 0:2] + bboxes[:, 2:4]) * 0.5
 
-            locations_to_gt_area = area[None].repeat(len(locations), 1)
-            locations_to_gt_area[is_in_boxes == 0] = INF
-            locations_to_gt_area[is_cared_in_the_level == 0] = INF
+                locations_to_gt = (xs[:, None] - centers[:, 0][None]) ** 2 + \
+                    (ys[:, None] - centers[:, 1][None]) ** 2
+
+            # negative (background) locations which fall outside the sampled region of any ground-truth object.
+            locations_to_gt[~is_in_boxes] = INF
+
+            # ignored locations which the maximum regression targets are outside the size range of the FPN level.
+            if len(size_ranges) > 0:
+                max_reg_targets_per_im = reg_targets_per_im.max(dim=2)[0]
+                is_ignored = is_in_boxes & \
+                    (
+                        (max_reg_targets_per_im < size_ranges[:, [0]]) | \
+                        (max_reg_targets_per_im > size_ranges[:, [1]])
+                    )
+                locations_to_gt[is_ignored] = IGN
+            # ignored locations which associate with ignored ground-truth objects.
+            if targets_per_im.has("gt_ids"):
+                is_ignored = is_in_boxes & (targets_per_im.gt_ids == -1).expand_as(is_in_boxes)
+                locations_to_gt[is_ignored] = IGN
 
             # if there are still more than one objects for a location,
-            # we choose the one with minimal area
-            locations_to_min_area, locations_to_gt_inds = locations_to_gt_area.min(dim=1)
+            # we choose the one with minimal area or minimal distance between the center to the location
+            locations_to_gt, locations_to_gt_inds = locations_to_gt.min(dim=1)
 
             reg_targets_per_im = reg_targets_per_im[range(len(locations)), locations_to_gt_inds]
             target_inds_per_im = locations_to_gt_inds + num_targets
             num_targets += len(targets_per_im)
 
             labels_per_im = labels_per_im[locations_to_gt_inds]
-            labels_per_im[locations_to_min_area == INF] = self.num_classes
+            labels_per_im[locations_to_gt == INF] = self.num_classes
+            # set target labels of ignored locations as -1 to avoid loss computation
+            labels_per_im[locations_to_gt == IGN] = -1
 
             labels.append(labels_per_im)
             reg_targets.append(reg_targets_per_im)
@@ -323,6 +348,9 @@ class FCOSOutputs(nn.Module):
                 # Reshape: (N, -1, Hi, Wi) -> (N*Hi*Wi, -1)
                 x.permute(0, 2, 3, 1).reshape(-1, x.size(1)) for x in top_feats
             ], dim=0,)
+
+        # filter out ignored locations
+        instances = instances[instances.labels >= 0]
 
         return self.fcos_losses(instances)
 
