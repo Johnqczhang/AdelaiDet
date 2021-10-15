@@ -56,6 +56,7 @@ class FCOSOutputs(nn.Module):
 
         self.focal_loss_alpha = cfg.MODEL.FCOS.LOSS_ALPHA
         self.focal_loss_gamma = cfg.MODEL.FCOS.LOSS_GAMMA
+        self.mask_sample = cfg.MODEL.MASK_ON and cfg.MODEL.FCOS.MASK_SAMPLE
         self.center_sample = cfg.MODEL.FCOS.CENTER_SAMPLE
         self.radius = cfg.MODEL.FCOS.POS_RADIUS
         self.pre_nms_thresh_train = cfg.MODEL.FCOS.INFERENCE_TH_TRAIN
@@ -242,6 +243,11 @@ class FCOSOutputs(nn.Module):
                 )
             else:
                 is_in_boxes = reg_targets_per_im.min(dim=2)[0] > 0
+
+            if self.mask_sample:
+                assert targets_per_im.has("gt_bitmasks_full")
+                bitmasks = targets_per_im.gt_bitmasks_full  # (n_objs, H, W)
+                is_in_boxes &= bitmasks[:, (ys - 1).long(), (xs - 1).long()].t()
 
             if self.location_to_gt == "area":
                 area = targets_per_im.gt_boxes.area()
