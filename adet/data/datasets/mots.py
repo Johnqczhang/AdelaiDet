@@ -88,7 +88,8 @@ def load_mots_json(json_file, image_root, dataset_name=None, extra_annotation_ke
         logger.info("Loading {} takes {:.2f} seconds.".format(json_file, timer.seconds()))
 
     assert dataset_name is not None
-    is_train = "train" in dataset_name
+    # is_train = "train" in dataset_name
+    is_train = True
     meta = MetadataCatalog.get(dataset_name)
     cat_ids = sorted(coco_api.getCatIds())
     cats = coco_api.loadCats(cat_ids)

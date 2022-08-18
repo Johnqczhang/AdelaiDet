@@ -14,7 +14,8 @@ INPUT:
   FIXED_SIZES_TEST: ((384, 1280),)
   MASK_FORMAT: "bitmask"
 DATASETS:
-  TRAIN: ("kitti_mots_train",)
+  # TRAIN: ("kitti_mots_train",)
+  TRAIN: ("kitti_mots_val",)
   TEST: ("kitti_mots_val",)
 DATALOADER:
   NUM_WORKERS: 8

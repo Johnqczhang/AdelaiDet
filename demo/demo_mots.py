@@ -335,8 +335,7 @@ if __name__ == "__main__":
 
         assert args.output
         out_imgs_dir = osp.join(args.output, "images")
-        if not osp.exists(args.output) or not osp.exists(out_imgs_dir):
-            os.system(f"mkdir -p {out_imgs_dir}")
+        os.makedirs(out_imgs_dir, exist_ok=True)
 
         trackers = {
             k : MOTSTracker(args, frame_rate=fps) for k in ["ped", "car"]

@@ -1,0 +1,754 @@
+From 84e1482c50bd2941da259a8679581bd673a7ff5b Mon Sep 17 00:00:00 2001
+From: Johnqczhang <Johnqczhang@gmail.com>
+Date: Tue, 21 Sep 2021 19:30:25 +0800
+Subject: [PATCH] temp commit
+
+---
+ adet/config/defaults.py               |  55 +++++++++++++++
+ adet/data/datasets/mots.py            |   9 +++
+ adet/modeling/condinst/condinst.py    |  55 +++++++++------
+ adet/modeling/condinst/corr.py        |  46 +++++++++++--
+ adet/modeling/condinst/mask_branch.py |  15 ++++-
+ adet/modeling/fcos/fcos_outputs.py    |  61 +++++++++++++++--
+ configs/CondInst/kitti_mots_R_50.yaml |  16 +++--
+ configs/CondInst/mots_R_50.yaml       |  32 +++++++--
+ exp_mots.sh                           | 122 ++++++++++++++++++++++++++++++++++
+ 9 files changed, 368 insertions(+), 43 deletions(-)
+ create mode 100755 exp_mots.sh
+
+diff --git a/adet/config/defaults.py b/adet/config/defaults.py
+index 5b1db5b..ee8fa47 100644
+--- a/adet/config/defaults.py
++++ b/adet/config/defaults.py
+@@ -262,9 +262,16 @@ _C.MODEL.CONDINST.MASK_BRANCH.CHANNELS = 128
+ _C.MODEL.CONDINST.MASK_BRANCH.NORM = "BN"
+ _C.MODEL.CONDINST.MASK_BRANCH.NUM_CONVS = 4
+ _C.MODEL.CONDINST.MASK_BRANCH.SEMANTIC_LOSS_ON = False
++# By default, the mask branch has four 3x3 conv blocks (Conv+BN+ReLU) with 128 channels,
++# the features output from each block is denoted by "m0", "m1", "m2", "m3".
++# The features output from the last 1x1 conv layer with 8 channels of the mask branch is denoted by "m4".
++_C.MODEL.CONDINST.MASK_BRANCH.OUT_FEATURES = ["m4"]
+ 
+ 
+ _C.MODEL.PX_VOLUME = CN({"ENABLED": False})
++_C.MODEL.PX_VOLUME.IN_FEATURES = ["m4"]
++_C.MODEL.PX_VOLUME.IN_CHANNELS = 128
++_C.MODEL.PX_VOLUME.CHANNELS = 16
+ # 1: adjacent frames
+ # >1: frames around the current frame 
+ _C.MODEL.PX_VOLUME.SAMPLE_NEARBY_FRAMES = 1
+@@ -274,6 +281,11 @@ _C.MODEL.PX_VOLUME.SAMPLE_NEARBY_FRAMES = 1
+ # - "max": max pooling over all foreground pixel features
+ # - "ctr": extract features at the mass center over all foreground pixels  (e.g., FairMOT)
+ _C.MODEL.PX_VOLUME.MASK_POOLER_TYPE = "avg"
++# loss type:
++#  - "triplet"
++#  - "nce"
++#  - "infonce"
++# _C.MODEL.PX_VOLUME.LOSS_TYPE = "nce"
+ _C.MODEL.PX_VOLUME.LOSS_NCE_TEMP = 0.07
+ _C.MODEL.PX_VOLUME.LOSS_WEIGHT = 0.5
+ # If True, compute segmentation loss on masks of p3 level
+@@ -284,6 +296,49 @@ _C.MODEL.PX_VOLUME.VEC_OP_ON = False
+ _C.MODEL.PX_VOLUME.NORM_FEATS_ON = True
+ 
+ 
++# # The options for EmbedInst, which can generate proposal embeddings and pixel embeddings with CondInst model.
++# # The learning of both embeddings is based on EmbedMask for one-stage instance segmentation,
++# # please refer to the paper https://arxiv.org/abs/1912.01954
++# _C.MODEL.EMBEDINST = CN({"ENABLED": False})
++# _C.MODEL.EMBEDINST.EMBED_DIM = 16
++# # If True, only finetune on newly added modules
++# _C.MODEL.EMBEDINST.FREEZE_TRAIN = False
++
++# ### Proposal embeddings & learnable margins ###
++# # -1: no proposal head
++# # 0: no 1x1 conv before the predictions of proposal embeddings and margins
++# # n (n > 0): add an extra 1x1 conv layer with n channels before the predictions
++# _C.MODEL.EMBEDINST.PROPOSAL_HEAD_CHANNELS = 0
++# _C.MODEL.EMBEDINST.USE_MARGIN = True
++# _C.MODEL.EMBEDINST.PRIOR_MARGIN = 2.0
++# _C.MODEL.EMBEDINST.MARGIN_REDUCE_FACTOR = 32.0
++# # TODO: training samples sampling strategy
++# # _C.MODEL.EMBEDINST.SAMPLE_IN_MASK = False
++# _C.MODEL.EMBEDINST.LOSS_WEIGHT_HINGE = 1.0
++# # If True, add a smooth loss that reduces the variance of embeddings for each gt instance
++# _C.MODEL.EMBEDINST.LOSS_SMOOTH_ON = False
++# _C.MODEL.EMBEDINST.LOSS_WEIGHT_SMOOTH = 0.1
++# # If True, add a cross-entropy loss for re-ID classification
++# _C.MODEL.EMBEDINST.LOSS_REID_ON = False
++# # "focal": FocalLoss, "ce": CrossEntropyLoss
++# _C.MODEL.EMBEDINST.LOSS_REID_TYPE = "focal"
++# _C.MODEL.EMBEDINST.LOSS_WEIGHT_REID = 0.1
++# # Note that the number of instance ids is different when using different one-leave-out settings
++# _C.MODEL.EMBEDINST.NUM_INST_IDS = 202
++# # TODO: If True, the loss on negative samples which sampled from different videos is also considered (default)
++# # _C.MODEL.EMBEDINST.LOSS_INTRA_SEQ_ON = True
++
++# ### Pixel embeddings ###
++# # If True, the model will predict pixel embeddings based on P3 features
++# _C.MODEL.EMBEDINST.PIXEL_BRANCH = CN({"ENABLED": False})
++# # If True, use mask features output by condinst's mask branch
++# _C.MODEL.EMBEDINST.PIXEL_BRANCH.SHARED = False
++# _C.MODEL.EMBEDINST.PIXEL_BRANCH.OUT_CHANNELS = 128
++# # "l2": euclidean distance | "cos": cosine distance
++# _C.MODEL.EMBEDINST.PIXEL_BRANCH.DIST_TYPE = "l2"
++# _C.MODEL.EMBEDINST.PIXEL_BRANCH.FIXED_MARGINS = [0.5, 1.5, 0.0]
++
++
+ # The options for BoxInst, which can train the instance segmentation model with box annotations only
+ # Please refer to the paper https://arxiv.org/abs/2012.02310
+ _C.MODEL.BOXINST = CN()
+diff --git a/adet/data/datasets/mots.py b/adet/data/datasets/mots.py
+index e82df91..fc8530d 100644
+--- a/adet/data/datasets/mots.py
++++ b/adet/data/datasets/mots.py
+@@ -11,6 +11,8 @@ from detectron2.config import configurable
+ from detectron2.data import DatasetCatalog, MetadataCatalog, MapDataset, DatasetFromList
+ from detectron2.data.build import _train_loader_from_config, build_batch_data_loader
+ from detectron2.data.samplers import TrainingSampler
++# from detectron2.data.build import _test_loader_from_config
++# from detectron2.data.samplers import InferenceSampler
+ 
+ 
+ """
+@@ -276,3 +278,10 @@ def build_mots_train_loader(
+         aspect_ratio_grouping=aspect_ratio_grouping,
+         num_workers=num_workers,
+     )
++
++
++# @configurable(from_config=_test_loader_from_config)
++# def build_mots_test_loader(dataset, *, mapper, num_workers=0):
++#     dataset = DatasetFromList(dataset, copy=False)
++#     dataset = PairwiseMapDataset(dataset, mapper)
++#     sampler = InferenceSampler(len(dataset))
+diff --git a/adet/modeling/condinst/condinst.py b/adet/modeling/condinst/condinst.py
+index 96eb0da..0ff0fb0 100644
+--- a/adet/modeling/condinst/condinst.py
++++ b/adet/modeling/condinst/condinst.py
+@@ -16,6 +16,7 @@ from detectron2.structures.masks import PolygonMasks, polygons_to_bitmask
+ from .dynamic_mask_head import build_dynamic_mask_head
+ from .mask_branch import build_mask_branch
+ from .corr import build_corr_block
++# from .corr import CorrBlock, build_corr_block
+ 
+ from adet.utils.comm import aligned_bilinear
+ 
+@@ -86,6 +87,7 @@ class CondInst(nn.Module):
+         self.mask_head = build_dynamic_mask_head(cfg)
+         self.mask_branch = build_mask_branch(cfg, self.backbone.output_shape())
+         self.corr_block = build_corr_block(cfg)
++        # self.prev_mask_feats = None
+ 
+         self.mask_out_stride = cfg.MODEL.CONDINST.MASK_OUT_STRIDE
+ 
+@@ -113,6 +115,14 @@ class CondInst(nn.Module):
+         pixel_std = torch.Tensor(cfg.MODEL.PIXEL_STD).to(self.device).view(3, 1, 1)
+         self.normalizer = lambda x: (x - pixel_mean) / pixel_std
+         self.to(self.device)
++        # self.freeze_training = cfg.MODEL.EMBEDINST.FREEZE_TRAIN
++        # if self.freeze_training:
++        #     logger.info("Some model parameters are frozen during training, only finetuning the following parameters:")
++        #     for name, param in self.named_parameters():
++        #         if "embedinst" not in name:
++        #             param.requires_grad = False
++        #         else:
++        #             print(name)
+ 
+     def forward(self, batched_inputs):
+         if self.training and self.corr_block:
+@@ -165,21 +175,26 @@ class CondInst(nn.Module):
+         proposals, proposal_losses = self.proposal_generator(
+             images_norm, features, gt_instances, self.controller
+         )
++        if self.corr_block:
++            corr_feats = self.corr_block(mask_feats)
+ 
+         if self.training:
+-            mask_losses = self._forward_mask_heads_train(proposals, mask_feats, gt_instances)
++            mask_losses = self._forward_mask_heads_train(proposals, mask_feats["m4"], gt_instances)
+ 
+             losses = {}
+             losses.update(sem_losses)
+             losses.update(proposal_losses)
+             losses.update(mask_losses)
+             if self.corr_block:
+-                corr_losses = self.corr_block.loss(mask_feats, self.mask_branch.out_stride, gt_instances)
++                corr_losses = self.corr_block.loss(corr_feats, self.mask_branch.out_stride, gt_instances)
+                 losses.update(corr_losses)
+             return losses
+         else:
+-            pred_instances_w_masks = self._forward_mask_heads_test(proposals, mask_feats)
++            pred_instances_w_masks = self._forward_mask_heads_test(proposals, mask_feats["m4"])
+ 
++            # if self.track_enabled:
++            #     factor = int(self.mask_branch.out_stride / self.mask_head.mask_out_stride)
++            #     mask_feats = aligned_bilinear(mask_feats, factor)
+             padded_im_h, padded_im_w = images_norm.tensor.size()[-2:]
+             processed_results = []
+             for im_id, (input_per_image, image_size) in enumerate(zip(batched_inputs, images_norm.image_sizes)):
+@@ -187,25 +202,27 @@ class CondInst(nn.Module):
+                 width = input_per_image.get("width", image_size[1])
+ 
+                 instances_per_im = pred_instances_w_masks[pred_instances_w_masks.im_inds == im_id]
+-
+-                pad_ltrb = input_per_image.get("pad_ltrb", None)
+-                if pad_ltrb is not None:
+-                    instances_per_im = self.unpad_postprocess(
+-                        instances_per_im, pad_ltrb, height, width,
+-                    )
+-                else:
+-                    instances_per_im = self.postprocess(
+-                        instances_per_im, height, width,
+-                        padded_im_h, padded_im_w
+-                    )
+-
+-                if self.corr_block:
+-                    instances_per_im = self.corr_block.postprocess(
+-                        mask_feats[im_id], self.mask_branch.out_stride, instances_per_im
+-                    )
++                if len(instances_per_im) > 0:
++                    pad_ltrb = input_per_image.get("pad_ltrb", None)
++                    if pad_ltrb is not None:
++                        instances_per_im = self.unpad_postprocess(
++                            instances_per_im, pad_ltrb, height, width,
++                        )
++                    else:
++                        instances_per_im = self.postprocess(
++                            instances_per_im, height, width,
++                            padded_im_h, padded_im_w
++                        )
++
++                    if self.corr_block:
++                        instances_per_im = self.corr_block.postprocess(
++                            corr_feats[im_id], self.mask_branch.out_stride, instances_per_im
++                        )
+ 
+                 predictions = dict(instances=instances_per_im)
+                 processed_results.append(predictions)
++            # if self.track_enabled:
++            #     self.prev_mask_feats = mask_feats
+ 
+             return processed_results
+ 
+diff --git a/adet/modeling/condinst/corr.py b/adet/modeling/condinst/corr.py
+index 96fc1e3..5f42e58 100644
+--- a/adet/modeling/condinst/corr.py
++++ b/adet/modeling/condinst/corr.py
+@@ -5,6 +5,9 @@ import torch.nn as nn
+ import torch.nn.functional as F
+ 
+ 
++# __all__ = ["CorrBlock"]
++
++
+ logger = logging.getLogger(__name__)
+ 
+ 
+@@ -35,8 +38,21 @@ def mask_feats_pooler(fmap, masks, pooler_type="mean"):
+         raise NotImplementedError
+ 
+ 
+-class CorrBlock:
++class CorrBlock(nn.Module):
+     def __init__(self, cfg):
++        # self.radius = radius
++        super().__init__()
++        self.in_features = cfg.MODEL.PX_VOLUME.IN_FEATURES
++        in_channels = cfg.MODEL.PX_VOLUME.IN_CHANNELS
++        channels = cfg.MODEL.PX_VOLUME.CHANNELS
++        if channels > 0:
++            corr_conv = nn.Conv2d(in_channels, channels, 1)
++            nn.init.normal_(corr_conv.weight, std=0.01)
++            nn.init.constant_(corr_conv.bias, 0)
++            self.corr_conv = corr_conv
++        else:
++            self.corr_conv = None
++
+         self.vec_op_on = cfg.MODEL.PX_VOLUME.VEC_OP_ON
+         self.norm_feats_on = cfg.MODEL.PX_VOLUME.NORM_FEATS_ON
+         self.T = cfg.MODEL.PX_VOLUME.LOSS_NCE_TEMP
+@@ -57,11 +73,23 @@ class CorrBlock:
+         corr = torch.einsum("npc,nqc->npq", [mask_feats[:n], mask_feats[n:]])
+         return corr
+ 
++    def forward(self, mask_feats):
++        x = mask_feats[self.in_features[0]]
++        if self.corr_conv:
++            x = self.corr_conv(x)
++
++        return x
++
++    def loss_hard_triplet(self, gt_instances):
++        loss = {}
++
++        return loss
++
+     def loss(self, mask_feats, mask_feat_stride, gt_instances):
+         # mask_feats: (N, C, H, W)
+         # normalization over the feature dimension
+-        if self.norm_feats_on:
+-            mask_feats = F.normalize(mask_feats, dim=1)
++        # if self.norm_feats_on:
++        #     mask_feats = F.normalize(mask_feats, dim=1)
+ 
+         n = mask_feats.size(0) // 2
+         loss_corr = []
+@@ -90,7 +118,13 @@ class CorrBlock:
+                 corr_ids1[gt_masks1.sum(dim=(1, 2)) == 0] = -1
+                 corr_ids2[gt_masks2.sum(dim=(1, 2)) == 0] = -1
+ 
+-            corr = torch.einsum("pc,qc->pq", [feats1, feats2]) / self.T
++            if self.norm_feats_on:
++                feats1 = F.normalize(feats1, dim=1)
++                feats2 = F.normalize(feats2, dim=1)
++
++            # corr = torch.einsum("pc,qc->pq", [feats1, feats2]) / self.T
++            corr = (feats1[:, None] - feats2[None]).square().sum(dim=-1) * 0.5
++            corr = (1 - corr) / self.T
+ 
+             loss1 = F.cross_entropy(corr, corr_ids1, ignore_index=-1)
+             loss2 = F.cross_entropy(corr.t(), corr_ids2, ignore_index=-1)
+@@ -105,8 +139,8 @@ class CorrBlock:
+ 
+     def postprocess(self, mask_fmap, mask_feat_stride, pred_instances):
+         # mask_fmap: (C, H, W)
+-        if self.norm_feats_on:
+-            mask_fmap = F.normalize(mask_fmap, dim=0)
++        # if self.norm_feats_on:
++        #     mask_fmap = F.normalize(mask_fmap, dim=0)
+         if self.pooler_type == "ctr":
+             ctrs = get_mask_centers(pred_instances.pred_global_masks)
+             ctrs = (ctrs / mask_feat_stride).long()
+diff --git a/adet/modeling/condinst/mask_branch.py b/adet/modeling/condinst/mask_branch.py
+index 0cd7b0f..775d90b 100644
+--- a/adet/modeling/condinst/mask_branch.py
++++ b/adet/modeling/condinst/mask_branch.py
+@@ -24,6 +24,7 @@ class MaskBranch(nn.Module):
+         self.in_features = cfg.MODEL.CONDINST.MASK_BRANCH.IN_FEATURES
+         self.sem_loss_on = cfg.MODEL.CONDINST.MASK_BRANCH.SEMANTIC_LOSS_ON
+         self.num_outputs = cfg.MODEL.CONDINST.MASK_BRANCH.OUT_CHANNELS
++        self.out_features = cfg.MODEL.CONDINST.MASK_BRANCH.OUT_FEATURES
+         norm = cfg.MODEL.CONDINST.MASK_BRANCH.NORM
+         num_convs = cfg.MODEL.CONDINST.MASK_BRANCH.NUM_CONVS
+         channels = cfg.MODEL.CONDINST.MASK_BRANCH.CHANNELS
+@@ -46,10 +47,13 @@ class MaskBranch(nn.Module):
+                 channels, channels, 3, 1
+             ))
+         last_conv = nn.Conv2d(channels, max(self.num_outputs, 1), 1)
+-        nn.init.kaiming_uniform_(last_conv.weight, a=1)
++        # last_conv = conv_block(channels, self.num_outputs, 1)
++        nn.init.normal_(last_conv.weight, std=0.01)
+         nn.init.constant_(last_conv.bias, 0)
++        # self.last_conv = last_conv
+         tower.append(last_conv)
+         self.add_module('tower', nn.Sequential(*tower))
++        self.num_convs = len(tower)
+ 
+         if self.sem_loss_on:
+             num_classes = cfg.MODEL.FCOS.NUM_CLASSES
+@@ -84,7 +88,14 @@ class MaskBranch(nn.Module):
+                 x_p = aligned_bilinear(x_p, factor_h)
+                 x = x + x_p
+ 
+-        mask_feats = self.tower(x)
++        mask_feats = {}
++        for i, f in enumerate(self.tower):
++            x = f(x)
++            k = f"m{i}"
++            if k in self.out_features:
++                mask_feats[k] = x
++        # mask_feats = self.tower(x)
++        # mask_feats = self.last_conv(mask_feats)
+ 
+         losses = {}
+         # auxiliary thing semantic loss
+diff --git a/adet/modeling/fcos/fcos_outputs.py b/adet/modeling/fcos/fcos_outputs.py
+index 2b0a4e8..19dcdac 100644
+--- a/adet/modeling/fcos/fcos_outputs.py
++++ b/adet/modeling/fcos/fcos_outputs.py
+@@ -91,6 +91,7 @@ class FCOSOutputs(nn.Module):
+         self.moving_num_fg_momentum = 0.9
+ 
+         self.loss_weight_cls = cfg.MODEL.FCOS.LOSS_WEIGHT_CLS
++        # self.track_keys = ["video_ids", "frame_ids", "inst_ids"] if cfg.MODEL.PX_VOLUME.ENABLED else []
+ 
+     def _transpose(self, training_targets, num_loc_list):
+         '''
+@@ -149,7 +150,7 @@ class FCOSOutputs(nn.Module):
+ 
+         return training_targets
+ 
+-    def get_sample_region(self, boxes, strides, num_loc_list, loc_xs, loc_ys, bitmasks=None, radius=1, centers=None):
++    def get_sample_region(self, boxes, strides, num_loc_list, loc_xs, loc_ys, bitmasks=None, radius=1, centers=None, labels=None):
+         if centers is not None:
+             center_x, center_y = centers[..., 0], centers[..., 1]
+         elif bitmasks is not None:
+@@ -177,13 +178,34 @@ class FCOSOutputs(nn.Module):
+         if center_x.numel() == 0 or center_x[..., 0].sum() == 0:
+             return loc_xs.new_zeros(loc_xs.shape, dtype=torch.uint8)
+         beg = 0
++        if labels is not None:
++            labels = labels[None].expand(K, num_gts)
++
+         for level, num_loc in enumerate(num_loc_list):
+             end = beg + num_loc
+             stride = strides[level] * radius
+-            xmin = center_x[beg:end] - stride
+-            ymin = center_y[beg:end] - stride
+-            xmax = center_x[beg:end] + stride
+-            ymax = center_y[beg:end] + stride
++            if labels is not None:
++                stride_x = torch.where(
++                    labels[beg:end] == 1,
++                    torch.full_like(center_x[beg:end], stride),
++                    torch.full_like(center_x[beg:end], stride) * 1.6  # car, w:h = 1.6:1
++                )
++                stride_y = torch.where(
++                    labels[beg:end] == 1,
++                    torch.full_like(center_x[beg:end], stride) * 2.5,  # pedestrian, w:h = 1:2
++                    torch.full_like(center_x[beg:end], stride)
++                )
++            else:
++                stride_x = stride_y = stride
++
++            # xmin = center_x[beg:end] - stride
++            # ymin = center_y[beg:end] - stride
++            # xmax = center_x[beg:end] + stride
++            # ymax = center_y[beg:end] + stride
++            xmin = center_x[beg:end] - stride_x
++            ymin = center_y[beg:end] - stride_y
++            xmax = center_x[beg:end] + stride_x
++            ymax = center_y[beg:end] + stride_y
+             # limit sample region in gt
+             center_gt[beg:end, :, 0] = torch.where(xmin > boxes[beg:end, :, 0], xmin, boxes[beg:end, :, 0])
+             center_gt[beg:end, :, 1] = torch.where(ymin > boxes[beg:end, :, 1], ymin, boxes[beg:end, :, 1])
+@@ -202,6 +224,7 @@ class FCOSOutputs(nn.Module):
+         labels = []
+         reg_targets = []
+         target_inds = []
++        # track_ids = {name: [] for name in self.track_keys}
+         xs, ys = locations[:, 0], locations[:, 1]
+ 
+         num_targets = 0
+@@ -215,6 +238,8 @@ class FCOSOutputs(nn.Module):
+                 labels.append(labels_per_im.new_zeros(locations.size(0)) + self.num_classes)
+                 reg_targets.append(locations.new_zeros((locations.size(0), 4)))
+                 target_inds.append(labels_per_im.new_zeros(locations.size(0)) - 1)
++                # for v in track_ids.values():
++                #     v.append(labels_per_im.new_zeros(locations.size(0)) - 1)
+                 continue
+ 
+             area = targets_per_im.gt_boxes.area()
+@@ -234,7 +259,8 @@ class FCOSOutputs(nn.Module):
+ 
+                 is_in_boxes = self.get_sample_region(
+                     bboxes, self.strides, num_loc_list, xs, ys,
+-                    bitmasks=bitmasks, radius=self.radius, centers=centers
++                    bitmasks=bitmasks, radius=self.radius, centers=centers,
++                    labels=labels_per_im
+                 )
+             else:
+                 is_in_boxes = reg_targets_per_im.min(dim=2)[0] > 0
+@@ -260,11 +286,19 @@ class FCOSOutputs(nn.Module):
+             labels_per_im = labels_per_im[locations_to_gt_inds]
+             labels_per_im[locations_to_min_area == INF] = self.num_classes
+ 
++            # if len(self.track_keys) > 0:
++            #     for k, v in track_ids.items():
++            #         ids_per_im = targets_per_im.get(k)[locations_to_gt_inds]
++            #         ids_per_im[locations_to_min_area == INF] = -1
++            #         v.append(ids_per_im)
++
+             labels.append(labels_per_im)
+             reg_targets.append(reg_targets_per_im)
+             target_inds.append(target_inds_per_im)
+ 
+         training_targets = dict(labels=labels, reg_targets=reg_targets, target_inds=target_inds)
++        # if len(self.track_keys) > 0:
++        #     training_targets.update(track_ids)
+ 
+         return training_targets
+ 
+@@ -323,6 +357,10 @@ class FCOSOutputs(nn.Module):
+                 # Reshape: (N, -1, Hi, Wi) -> (N*Hi*Wi, -1)
+                 x.permute(0, 2, 3, 1).reshape(-1, x.size(1)) for x in top_feats
+             ], dim=0,)
++        # if len(self.track_keys) > 0:
++        #     # Reshape: (N, 1, Hi, Wi) -> (N*Hi*Wi,)
++        #     for name in self.track_keys:
++        #         instances.set(name, cat(training_targets[name], dim=0))
+ 
+         return self.fcos_losses(instances)
+ 
+@@ -428,6 +466,9 @@ class FCOSOutputs(nn.Module):
+         if len(top_feats) > 0:
+             bundle["t"] = top_feats
+ 
++        # if len(self.track_keys) > 0:
++        #     num_loc_list = [l.size(0) for l in locations]
++
+         for i, per_bundle in enumerate(zip(*bundle.values())):
+             # get per-level bundle
+             per_bundle = dict(zip(bundle.keys(), per_bundle))
+@@ -445,10 +486,16 @@ class FCOSOutputs(nn.Module):
+                 )
+             )
+ 
++            # if len(self.track_keys) > 0:
++            #     num_imgs = len(sampled_boxes[-1])
++            #     num_locs = sum(num_loc_list[0:i])
+             for per_im_sampled_boxes in sampled_boxes[-1]:
+                 per_im_sampled_boxes.fpn_levels = l.new_ones(
+                     len(per_im_sampled_boxes), dtype=torch.long
+                 ) * i
++            #     if len(self.track_keys) > 0:
++            #         # transpose to level first
++            #         per_im_sampled_boxes.pos_inds += num_locs * num_imgs
+ 
+         boxlists = list(zip(*sampled_boxes))
+         boxlists = [Instances.cat(boxlist) for boxlist in boxlists]
+@@ -510,6 +557,7 @@ class FCOSOutputs(nn.Module):
+                 per_box_cls, top_k_indices = \
+                     per_box_cls.topk(per_pre_nms_top_n, sorted=False)
+                 per_class = per_class[top_k_indices]
++                # per_box_loc = per_box_loc[top_k_indices]
+                 per_box_regression = per_box_regression[top_k_indices]
+                 per_locations = per_locations[top_k_indices]
+                 if top_feat is not None:
+@@ -527,6 +575,7 @@ class FCOSOutputs(nn.Module):
+             boxlist.scores = torch.sqrt(per_box_cls)
+             boxlist.pred_classes = per_class
+             boxlist.locations = per_locations
++            # boxlist.pos_inds = per_box_loc + i * per_candidate_inds.size(0)
+             if top_feat is not None:
+                 boxlist.top_feat = per_top_feat
+             results.append(boxlist)
+diff --git a/configs/CondInst/kitti_mots_R_50.yaml b/configs/CondInst/kitti_mots_R_50.yaml
+index 20ef033..76aa9fc 100644
+--- a/configs/CondInst/kitti_mots_R_50.yaml
++++ b/configs/CondInst/kitti_mots_R_50.yaml
+@@ -4,9 +4,17 @@ MODEL:
+   RESNETS:
+     DEPTH: 50
+   FCOS:
+-    NUM_CLASSES: 2
++    NUM_CLASSES: 80
+   CONDINST:
+     MAX_PROPOSALS: 1000
++  #   MASK_BRANCH:
++  #     OUT_FEATURES: ["m3", "m4"]
++  PX_VOLUME:
++    ENABLED: True
++  #   SAMPLE_NEARBY_FRAMES: 5
++  #   MASK_POOLER_TYPE: "avg"
++    USE_P3_MASK: True
++  #   CHANNELS: 16
+ OUTPUT_DIR: "train_dir/kitti/mots_R50_1x"
+ INPUT:
+   RESIZE_MODE: "fixed"
+@@ -21,8 +29,8 @@ DATALOADER:
+ SOLVER:
+   OPTIMIZER: "Adam"  # default: SGD
+   IMS_PER_BATCH: 32  # 4520 training images, ~283 iters/epoch
+-  BASE_LR: 1e-4
++  BASE_LR: 5e-7
+   WARMUP_ITERS: 0
+   # scheduler, 1x
+-  STEPS: (6000,)
+-  MAX_ITER: 9000
++  STEPS: (2400,)
++  MAX_ITER: 3000
+diff --git a/configs/CondInst/mots_R_50.yaml b/configs/CondInst/mots_R_50.yaml
+index 8e036e8..57f41aa 100644
+--- a/configs/CondInst/mots_R_50.yaml
++++ b/configs/CondInst/mots_R_50.yaml
+@@ -1,17 +1,37 @@
+ _BASE_: "Base-CondInst.yaml"
+ MODEL:
+   WEIGHTS: "models/CondInst_MS_R_50_3x.pth"
++  # WEIGHTS: "models/condinst_ms_r50_3x.pth"
+   RESNETS:
+     DEPTH: 50
+   FCOS:
+     NUM_CLASSES: 1
+   CONDINST:
+     MAX_PROPOSALS: 500  # use 500 if SOLVER.IMS_PER_BATCH = 32
++    # MASK_BRANCH:
++    #   OUT_FEATURES: ["m3", "m4"]
++  # PX_VOLUME:
++  #   ENABLED: True
++  #   SAMPLE_NEARBY_FRAMES: 5
++  #   MASK_POOLER_TYPE: "avg"
++  #   USE_P3_MASK: True
++  #   CHANNELS: 16
++  #   EMBED_DIM: 16
++  #   PROPOSAL_HEAD_CHANNELS: 0
++  #   LOSS_SMOOTH_ON: False
++  #   LOSS_WEIGHT_SMOOTH: 0.1
++  #   LOSS_REID_ON: True
++  #   USE_MARGIN: False
++  #   FREEZE_TRAIN: True
++    # PIXEL_BRANCH:
++    #   ENABLED: True
++    #   OUT_CHANNELS: 128
++  # FCOS:
++  #   YIELD_FEATURES: "box"
+ OUTPUT_DIR: "train_dir/CondInst_mots_R_50_1x"
+ INPUT:
+   RESIZE_MODE: "fixed"
+-  # FIXED_SIZES_TRAIN: ((544, 960), (576, 1024), (608, 1088), (640, 1152), (672, 1218), (704, 1282))
+-  FIXED_SIZES_TRAIN: ((608, 1088),)
++  FIXED_SIZES_TRAIN: ((544, 960), (576, 1024), (608, 1088), (640, 1152), (672, 1218), (704, 1282))
+   FIXED_SIZES_TEST: ((608, 1088),)
+   MASK_FORMAT: "bitmask"
+ DATASETS:
+@@ -20,12 +40,12 @@ DATASETS:
+   # TRAIN: ("mots_train",)
+   # TEST: ()
+ DATALOADER:
+-  NUM_WORKERS: 4
++  NUM_WORKERS: 16
+ SOLVER:
+-  OPTIMIZER: "Adam"  # default: SGD
++  # OPTIMIZER: "Adam"  # default: SGD
+   IMS_PER_BATCH: 16
+   BASE_LR: 1e-4
+   WARMUP_ITERS: 0
+   # scheduler, 1x
+-  STEPS: (6000,)
+-  MAX_ITER: 9000
++  STEPS: (2400,)
++  MAX_ITER: 3600
+diff --git a/exp_mots.sh b/exp_mots.sh
+new file mode 100755
+index 0000000..5705396
+--- /dev/null
++++ b/exp_mots.sh
+@@ -0,0 +1,122 @@
++#!/usr/bin/env zsh
++
++
++cfg_file="configs/CondInst/mots_R_50.yaml"
++base_cmd="OMP_NUM_THREADS=1 python tools/train_net.py --num-gpus 2"
++
++mots_ids=("02" "05" "09" "11")
++# condinst_models=("models/condinst_ms_r50_3x.pth" "models/condinst_ms_r50_3x_sem.pth")
++condinst_models=("models/CondInst_MS_R_50_3x.pth" "models/CondInst_MS_R_50_3x_sem.pth")
++
++# out_root="train_dir/base/multi_scale"
++out_root="train_dir/pxvol/v1.0"
++
++
++# args: model_weight, train_set, test_set, output_dir
++def run_train() {
++    # cmd=$base_cmd" MODEL.WEIGHTS $1 DATASETS.TRAIN $2 DATASETS.TEST $3 OUTPUT_DIR $4"
++    cmd=$base_cmd" --eval-only MODEL.WEIGHTS $1 DATASETS.TRAIN $2 DATASETS.TEST $3 OUTPUT_DIR train_dir/debug"
++    echo $cmd
++    eval $cmd
++    # eval "rm -rf $4/inference"
++    echo "\n"
++}
++
++
++def train_mots() {
++    # condinst_models=("models/CondInst_MS_R_50_3x.pth" "models/CondInst_MS_R_50_3x_sem.pth")
++    # for model ($condinst_models) {
++    model="models/CondInst_MS_R_50_3x.pth"
++    for val ($mots_ids) {
++        train_set="'(\"mots_train_$val\",)'"
++        val_set="'(\"mots_val_$val\",)'"
++
++        # if (( $val == 09 && $model[(I)sem])) {
++        #     continue
++        # }
++        # if (( $val == 05 && $model[(I)sem])) {
++        #     continue
++        # }
++
++        out_dir="mots$val""_R50_adam_5e-7"
++        if [[ $model == *"sem"* ]] {
++            out_dir+="_unsem"
++        }
++        out_dir="$out_root/$out_dir"
++        model="$out_dir/model_final.pth"
++
++        # run_train $model $train_set $val_set $out_dir
++        run_train $model $train_set $val_set
++    }
++    # }
++}
++
++
++def run_cmd() {
++    cmd=$1
++    out_dir=$2
++
++    echo $cmd
++    eval $cmd
++    eval "rm -rf $out_dir/inference"
++    echo "\n"
++}
++
++
++def test_condinst() {
++    condinst_models=("models/CondInst_MS_R_50_3x.pth" "models/CondInst_MS_R_50_3x_sem.pth")
++    # condinst_models=("models/condinst_ms_r50_3x.pth" "models/condinst_ms_r50_3x_sem.pth")
++    out_dir="train_dir/debug"
++    dataset=$1
++    if [[ "$1" == "mots" ]] {
++        cfg_file="configs/CondInst/mots_R_50.yaml"
++    } else {
++        cfg_file="configs/CondInst/kitti_mots_R_50.yaml"
++    }
++    opts="MODEL.RESNETS.NORM GN MODEL.RESNETS.STRIDE_IN_1X1 False MODEL.FPN.NORM GN MODEL.CONDINST.MASK_BRANCH.NORM GN"
++    cmd1=$base_cmd" --config-file $cfg_file --eval-only OUTPUT_DIR $out_dir $opts"
++
++    for model ($condinst_models) {
++        echo "Testing on mots using $model\n"
++        # if (( $model[(I)sem] == 0 )) {
++        #     continue
++        # }
++        if [[ "$1" == "mots" ]] {
++            for val ($mots_ids) {
++                val_set="'(\"mots_val_$val\",)'"
++                cmd2=$cmd1" MODEL.WEIGHTS $model DATASETS.TEST $val_set"
++                run_cmd $cmd2 $out_dir
++            }
++        } else {
++            cmd2=$cmd1" MODEL.WEIGHTS $model DATASETS.TEST '(\"kitti_mots_val\",)'"
++            run_cmd $cmd2 $out_dir
++        }   
++    }
++}
++
++
++test_mots() {
++    models_dir=($1/mots*)
++    for model_dir ($models_dir) {
++        weight="$model_dir/model_final.pth"
++        model_name=${model_dir:t}
++        val=$model_name[5,6]
++        val_set="'(\"mots_val_$val\",)'"
++
++        run_test $weight $val_set
++    }
++}
++
++
++
++# arg1: 'train' or 'test'
++func=$1
++if [[ "$1" == "test" ]] {
++    if [[ "$2" == "condinst" ]] {
++        test_condinst $3
++    } elif [[ "$2" == "base" ]] {
++        test_mots $3
++    }
++} else {
++    train_mots
++}
+-- 
+2.14.4.44.g2045bb6
+

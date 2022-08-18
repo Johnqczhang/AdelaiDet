@@ -98,6 +98,15 @@ class FCOSOutputs(nn.Module):
 
         self.loss_weight_cls = cfg.MODEL.FCOS.LOSS_WEIGHT_CLS
 
+        self.cnt_ambiguous = {
+            k: {n: 0 for n in range(4)}
+            for k in ["none", "fpn", "ctr", "ctr+fpn"]
+        }
+        self.cnt_pos_per_level = {
+            "before": [0] * len(soi),
+            "after": [0] * len(soi)
+        }
+
     def _transpose(self, training_targets, num_loc_list):
         '''
         This function is used to transpose image first training targets to level first ones
@@ -249,6 +258,19 @@ class FCOSOutputs(nn.Module):
                 bitmasks = targets_per_im.gt_bitmasks_full  # (n_objs, H, W)
                 is_in_boxes &= bitmasks[:, (ys - 1).long(), (xs - 1).long()].t()
 
+            # count the number of locations which fall into of the center region of [0, 1, 2, >=3] targets
+            cnt_loc = is_in_boxes.sum(dim=1)  # (n_locations,)
+            cnt_k = "ctr" if self.center_sample else "none"
+            for n in range(3):
+                self.cnt_ambiguous[cnt_k][n] += int((cnt_loc == n).sum())
+            self.cnt_ambiguous[cnt_k][3] += int((cnt_loc >= 3).sum())
+            # count the number of positive locations per FPN level
+            cnt_loc = cnt_loc > 0
+            begin = 0
+            for lvl, num_loc in enumerate(num_loc_list):
+                self.cnt_pos_per_level["before"][lvl] += int(cnt_loc[begin:begin + num_loc].sum())
+                begin += num_loc
+
             if self.location_to_gt == "area":
                 area = targets_per_im.gt_boxes.area()
                 locations_to_gt = area[None].repeat(len(locations), 1)
@@ -277,6 +299,19 @@ class FCOSOutputs(nn.Module):
             if targets_per_im.has("gt_ids"):
                 is_ignored = is_in_boxes & (targets_per_im.gt_ids == -1).expand_as(is_in_boxes)
                 locations_to_gt[is_ignored] = IGN
+
+            # count the number of locations which fall into the center region of [0, 1, 2, >=3] positive targets.
+            cnt_loc = (locations_to_gt < IGN).sum(dim=1)
+            cnt_k = "ctr+fpn" if self.center_sample else "fpn"
+            for n in range(3):
+                self.cnt_ambiguous[cnt_k][n] += int((cnt_loc == n).sum())
+            self.cnt_ambiguous[cnt_k][3] += int((cnt_loc >= 3).sum())
+            # count the number of positive locations per FPN level
+            cnt_loc = cnt_loc > 0
+            begin = 0
+            for lvl, num_loc in enumerate(num_loc_list):
+                self.cnt_pos_per_level["after"][lvl] += int(cnt_loc[begin:begin + num_loc].sum())
+                begin += num_loc
 
             # if there are still more than one objects for a location,
             # we choose the one with minimal area or minimal distance between the center to the location

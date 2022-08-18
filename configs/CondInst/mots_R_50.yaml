@@ -5,6 +5,8 @@ MODEL:
     DEPTH: 50
   FCOS:
     NUM_CLASSES: 1
+    # CENTER_SAMPLE: False
+    MASK_SAMPLE: True
   CONDINST:
     MAX_PROPOSALS: 500  # use 500 if SOLVER.IMS_PER_BATCH = 32
 OUTPUT_DIR: "train_dir/CondInst_mots_R_50_1x"
@@ -16,7 +18,7 @@ INPUT:
   MASK_FORMAT: "bitmask"
 DATASETS:
   TRAIN: ("mots_train_05",)
-  TEST: ("mots_val_05",)
+  TEST: ("mots_val_02",)
   # TRAIN: ("mots_train",)
   # TEST: ()
 DATALOADER:

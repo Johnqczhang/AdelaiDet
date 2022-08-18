@@ -41,7 +41,7 @@ MOT_CATEGORIES = {
 }
 MOTS_CATEGORIES = {1: "pedestrian", 2: "car", 10: "ignored"}
 HT21_CATEGORIES = {
-    1: "pedestrian", 2: "person on vehicle", 3: "static", 4: "ignored"
+    1: "pedestrian", 2: "static", 3: "ignored", 4: "person on vehicle"
 }
 
 
@@ -86,7 +86,7 @@ def load_ht21_txt(txt_path):
         assert cat_id in HT21_CATEGORIES, f"Unknown object class id: {cat_id}"
 
         if int(fields[6]) == 0:  # ignored object (this condition is never met actually.)
-            cat_id = 4
+            cat_id = 3
 
         is_visible = int(fields[8])
         assert is_visible in [0, 1]
@@ -94,8 +94,8 @@ def load_ht21_txt(txt_path):
         cat_cnt[cat_id][is_visible] += 1
 
         # treat invisible objects as background
-        if is_visible == 0:
-            continue
+        # if is_visible == 0:
+        #     continue
 
         # add an `ignore` field to indicate ignored objects
         objects_per_frame[frame_id].append({
@@ -104,7 +104,7 @@ def load_ht21_txt(txt_path):
             "bbox": box,
             "area": area,
             "iscrowd": 0,
-            "ignore": 0 if cat_id == 1 else 1
+            "ignore": 0 if (cat_id == 1 and is_visible == 1) else 1
         })
 
     # print statistics information
@@ -248,8 +248,7 @@ def get_cocofied_json_data(args, debug=False):
 
         if debug:
             debug_path = osp.join(imgs_path, "../debug")
-            if not osp.exists(debug_path):
-                os.mkdir(debug_path)
+            os.makedirs(debug_path, exist_ok=True)
             args["debug_path"] = debug_path
 
         # count the number of annotated objects per category in the current sequence.
@@ -318,7 +317,9 @@ def get_cocofied_json_data(args, debug=False):
                 """
                 if ignore:
                     if debug:
-                        boxes.append(np.array(anno["bbox"] + [cat_id]))
+                        # boxes.append(np.array(anno["bbox"] + [cat_id]))
+                        if cat_id == 1 and anno["ignore"]:
+                            boxes.append(np.array(anno["bbox"] + [cat_id]))
                         if "segmentation" in obj:
                             masks.append(segmToMask(obj["segmentation"], (img_h, img_w)))
                     img_annos_cnt[-1] -= 1  # discount the number of ignored objects
@@ -505,7 +506,7 @@ def cocofy_kitti_mots():
 
 def cocofy_ht21():
     anno_path = osp.join(ANNO_PATH, "ht21_txt")
-    data_path = osp.join(DATA_PATH, "HT21-train")
+    data_path = osp.join(MOT_PATH, "ht21", "HT21-train")
 
     args = {}
     args["seqs_annos"] = load_seqs_annos_from_txt(anno_path, load_ht21_txt)
@@ -521,7 +522,7 @@ def cocofy_ht21():
     args["dataset_name"] = "Crowd of Heads Dataset (CroHD)"
     args["imExt"] = ".jpg"
 
-    json_data = get_cocofied_json_data(args, debug=False)
+    json_data = get_cocofied_json_data(args, debug=True)
 
     json_file = osp.join(ANNO_PATH, "ht21_train.json")
     with open(json_file, 'w') as f:
